@@ -1,0 +1,17 @@
+# Voice Assistant Dependencies for Jarvis
+# Install with: pip install -r requirements-voice.txt
+
+# Core voice libraries
+SpeechRecognition>=3.10.0
+pyttsx3>=2.90
+
+# Optional: Offline Whisper support (more accurate STT)
+# Uncomment the line below for Whisper support (requires FFmpeg)
+# openai-whisper>=20230918
+
+# Optional: CMU Sphinx for completely offline STT (less accurate)
+# pocketsphinx>=5.0.0
+
+# Note: For Whisper, you also need FFmpeg installed:
+# - Download from https://ffmpeg.org/download.html
+# - Or install via package manager: choco install ffmpeg (Windows)

@@ -1,0 +1,21 @@
+# Local/private configuration
+.Scode/
+agent/config.json
+
+# Downloaded models and runtime bundles
+agent/models/
+agent/bin/
+agent/python-portable/
+agent/.downloads/
+agent/python-embed.zip
+
+# Local state
+agent/auth/
+agent/data/
+agent/logs/
+agent/brain/
+AUTOSTART.marker
+
+# Python caches
+__pycache__/
+*.py[cod]

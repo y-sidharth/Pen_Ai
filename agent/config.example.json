@@ -1,0 +1,8 @@
+{
+  "model_path": "models\\your-model.gguf",
+  "llama_bin": "bin\\llama.exe",
+  "llama_cmd_template": "{bin} -m {model} --cuda --threads 8 --temp 0.7 --repeat_penalty 1.1 --n_predict 512 --prompt-file {prompt_file}",
+  "no_internet": true,
+  "internet_allowed": false,
+  "theme": "neon"
+}
