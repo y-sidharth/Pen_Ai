@@ -33,6 +33,13 @@ run PowerShell, batch files, arbitrary executables, paths, or chained commands.
 The initial package intentionally runs without a bundled model or inference
 binary. It will explain what is missing instead of failing silently.
 
+## Desktop UI
+
+Run `agent/start-ui.bat` to open the Pen AI local web interface. It starts a
+small server on `127.0.0.1`, opens your browser, and provides chat, setup
+status, package validation, optional local-memory mode, and a launcher for the
+full CLI.
+
 ## Model download
 
 Model downloads require network access and explicit confirmation. Do not use
