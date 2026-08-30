@@ -5,11 +5,13 @@ single_query.py — single-shot query with simple TF-IDF RAG persisted on the pe
 import os
 import sys
 import json
+import re
 import shlex
 import subprocess
 import tempfile
 import math
 import time
+import datetime
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(BASE_DIR, 'config.json')
@@ -35,7 +37,7 @@ def read_system_prompt():
     if os.path.exists(SYSTEM_PROMPT_PATH):
         with open(SYSTEM_PROMPT_PATH, 'r', encoding='utf-8') as f:
             return f.read().strip()
-    return 'You are Jarvis, a local offline assistant.'
+    return 'You are Jampandu, a local offline assistant.'
 
 
 def tokenize(text):
@@ -71,7 +73,7 @@ def build_index():
         for t in terms:
             freqs[t] = freqs.get(t,0)+1
         # convert to tf-idf
-        vec = {t: (freqs[t]/len(terms)) * idf.get(t,1.0) for t in freqs}
+        vec = {t: (freqs[t]/len(terms)) * idf.get(t,1.0) for t in freqs} if terms else {}
         norm = math.sqrt(sum(v*v for v in vec.values()))
         if norm>0:
             vec = {k: v/norm for k,v in vec.items()}
@@ -103,7 +105,7 @@ def query_topk(index, q, k=3):
     for t in qterms:
         freqs[t] = freqs.get(t,0)+1
     idf = index.get('idf',{})
-    qvec = {t: (freqs[t]/len(qterms)) * idf.get(t,1.0) for t in freqs}
+    qvec = {t: (freqs[t]/len(qterms)) * idf.get(t,1.0) for t in freqs} if qterms else {}
     qnorm = math.sqrt(sum(v*v for v in qvec.values()))
     if qnorm>0:
         qvec = {k: v/qnorm for k,v in qvec.items()}
@@ -120,13 +122,24 @@ def query_topk(index, q, k=3):
     return [d for s,d in scores[:k] if s>0]
 
 
+def _clean_llm_output(text: str) -> str:
+    if not text:
+        return text
+    text = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL | re.IGNORECASE)
+    text = re.sub(r'</?think>', '', text, flags=re.IGNORECASE)
+    m = re.search(r'\n\s*(User|Assistant)\s*:', text)
+    if m:
+        text = text[:m.start()].rstrip()
+    return re.sub(r'\n{3,}', '\n\n', text).strip()
+
+
 def run_llama(llama_bin, model_path, prompt_file, cmd_template):
     cmd_str = cmd_template.format(bin=shlex.quote(llama_bin), model=shlex.quote(model_path), prompt_file=shlex.quote(prompt_file))
-    cmd = shlex.split(cmd_str)
+    cmd = shlex.split(cmd_str, posix=False) if os.name == 'nt' else shlex.split(cmd_str)
     try:
         proc = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
         output = proc.stdout.strip() or proc.stderr.strip()
-        return output
+        return _clean_llm_output(output)
     except Exception as e:
         return f'Error running inference binary: {e}'
 
@@ -155,8 +168,19 @@ def main():
 
     cfg = load_config()
     system_prompt = read_system_prompt()
-    llama_bin = os.path.join(BASE_DIR, cfg.get('llama_bin')) if not os.path.isabs(cfg.get('llama_bin')) else cfg.get('llama_bin')
-    model_path = os.path.join(BASE_DIR, cfg.get('model_path')) if not os.path.isabs(cfg.get('model_path')) else cfg.get('model_path')
+    # Ensure time is always injected so direct CLI calls also never hallucinate
+    try:
+        now = datetime.datetime.now().astimezone()
+        tz = now.strftime("%Z") or "local"
+        time_note = f"\nCurrent host local time: {now.strftime('%A, %B %d, %Y %I:%M %p')} {tz} (use this exact time for any time/date question)\n"
+        if "Current host local time" not in system_prompt:
+            system_prompt = system_prompt + "\n" + time_note
+    except Exception:
+        pass
+    _llama_bin_raw = cfg.get('llama_bin') or ''
+    _model_path_raw = cfg.get('model_path') or ''
+    llama_bin = _llama_bin_raw if os.path.isabs(_llama_bin_raw) else os.path.join(BASE_DIR, _llama_bin_raw)
+    model_path = _model_path_raw if os.path.isabs(_model_path_raw) else os.path.join(BASE_DIR, _model_path_raw)
     cmd_template = cfg.get('llama_cmd_template')
 
     # Load or build index from brain docs
@@ -168,6 +192,22 @@ def main():
             context = '\n---CONTEXT---\n' + '\n\n'.join(d['text'] for d in docs) + '\n---ENDCONTEXT---\n'
 
     prompt = system_prompt + '\n' + (context + '\n' if context else '') + f'User: {query_text}\nAssistant:'
+
+    # Fast path: if a warm llama-server is already running (started by the web UI
+    # or the CLI), reuse it instead of cold-loading the model for this popup.
+    try:
+        import llama_server
+        if llama_server.is_healthy():
+            _msgs = [{'role': 'system', 'content': system_prompt}]
+            if context:
+                _msgs.append({'role': 'system', 'content': context})
+            _msgs.append({'role': 'user', 'content': query_text})
+            warm_out = llama_server.chat(_msgs, timeout=120)
+            if warm_out:
+                print(_clean_llm_output(warm_out))
+                return
+    except Exception:
+        pass
 
     prompt_file = os.path.join(TMP_DIR, f'popup_prompt_{int(time.time()*1000)}.txt')
     with open(prompt_file, 'w', encoding='utf-8') as tf:

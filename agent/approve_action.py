@@ -41,8 +41,12 @@ if 'password' in cfg:
 
 # load or create secret
 if os.path.exists(SECRET_PATH):
-    with open(SECRET_PATH, 'rb') as sf:
-        secret = base64.b64decode(sf.read(), validate=True)
+    try:
+        with open(SECRET_PATH, 'rb') as sf:
+            secret = base64.b64decode(sf.read(), validate=True)
+    except Exception:
+        print('Approval secret is corrupt/invalid. Remove auth/secret.key and set up approval again.')
+        sys.exit(4)
     if len(secret) < 32:
         print('Approval secret is invalid. Remove auth/secret.key and set up approval again.')
         sys.exit(4)

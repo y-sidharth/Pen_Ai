@@ -3,12 +3,14 @@
 Run-agent controller with internet toggle, pendrive-only temp storage and safe cleanup.
 """
 import os
+import re
 import sys
 import json
 import shlex
 import subprocess
 import sqlite3
 import time
+import webbrowser
 from getpass import getpass
 from datetime import datetime
 
@@ -17,6 +19,16 @@ from security import create_nonce, setup_credential, verify_verifier
 from voice_assistant import VoiceAssistant, check_dependencies
 from media_controller import MediaController, handle_media_command, parse_media_command
 from task_executor import TaskExecutor, handle_task_command
+try:
+    import host_cleaner  # amnesiac host-trace erasure
+except Exception:
+    host_cleaner = None
+try:
+    import llama_server  # shared warm llama-server client (fast path; falls back to cold llama.exe)
+except Exception:
+    llama_server = None
+import atexit
+import signal
 
 # On Windows, the console's default codepage (e.g. cp1252/cp437) cannot encode
 # the box-drawing/gradient characters used below, and the crash happens before
@@ -39,6 +51,47 @@ AUTH_TOKEN_PATH = os.path.join(BASE_DIR, 'auth', 'allowlist.token')
 LOG_DIR = os.path.join(BASE_DIR, 'logs')
 os.makedirs(LOG_DIR, exist_ok=True)
 os.makedirs(TMP_DIR, exist_ok=True)
+
+# Fixed, hardcoded candidate paths only -- /open_browser never takes a
+# user-supplied path or URL, so there is nothing here for chat input (or a
+# prompt-injected instruction) to redirect into arbitrary execution. This is
+# a narrow, reviewed capability, not a general command-execution escape
+# hatch; it deliberately does NOT go through command_policy.SAFE_COMMANDS.
+# Amnesiac: we launch Brave in incognito so host does not persist 127.0.0.1 history/cache.
+BRAVE_CANDIDATES = [
+    os.path.expandvars(r'%ProgramFiles%\BraveSoftware\Brave-Browser\Application\brave.exe'),
+    os.path.expandvars(r'%ProgramFiles(x86)%\BraveSoftware\Brave-Browser\Application\brave.exe'),
+    os.path.expandvars(r'%LocalAppData%\BraveSoftware\Brave-Browser\Application\brave.exe'),
+]
+# Extra args for private browsing — prevents host from storing localhost visit
+BRAVE_INCOGNITO_ARGS = ["--incognito", "--no-first-run", "about:blank"]
+
+
+def launch_browser():
+    """Open Brave if it's installed at a known path, else the OS default browser.
+
+    Takes no arguments from the caller -- always opens a blank start page.
+    Amnesiac: Brave is launched incognito so the host stores no localhost history/cache.
+    """
+    for candidate in BRAVE_CANDIDATES:
+        if os.path.exists(candidate):
+            try:
+                # Incognito => host browser profile does not persist 127.0.0.1 visit
+                subprocess.Popen([candidate] + BRAVE_INCOGNITO_ARGS, close_fds=True)
+                return True, 'Brave (incognito)'
+            except Exception:
+                pass
+            # Fallback without incognito if --incognito fails
+            try:
+                subprocess.Popen([candidate, "about:blank"], close_fds=True)
+                return True, 'Brave'
+            except Exception:
+                pass
+    try:
+        # Default browser fallback — still open blank, but warn host may cache
+        return webbrowser.open('about:blank'), 'default browser'
+    except Exception:
+        return False, 'default browser'
 
 DEFAULT_CONFIG = {
     "model_path": "models\\13b.gguf",
@@ -79,7 +132,7 @@ def gradient_text(text, start_rgb=(255,0,128), end_rgb=(0,200,255)):
     out.append(RESET)
     return ''.join(out)
 
-def print_header(title='Jarvis - Local Assistant'):
+def print_header(title='Jampandu - Local Assistant'):
     try:
         cols = os.get_terminal_size().columns
     except OSError:
@@ -98,7 +151,7 @@ def load_config():
         with open(CONFIG_PATH, 'w', encoding='utf-8') as f:
             json.dump(DEFAULT_CONFIG, f, indent=2)
         print(f'Created default config at {CONFIG_PATH}. Please update model/bin paths if needed.')
-        return DEFAULT_CONFIG
+        return dict(DEFAULT_CONFIG)
     with open(CONFIG_PATH, 'r', encoding='utf-8') as f:
         cfg = json.load(f)
     changed = False
@@ -125,10 +178,19 @@ def save_config(cfg):
 
 
 def read_system_prompt():
+    base = 'You are Jampandu, a local offline assistant. Always ask for explicit permission before executing system commands.'
     if os.path.exists(SYSTEM_PROMPT_PATH):
-        with open(SYSTEM_PROMPT_PATH, 'r', encoding='utf-8') as f:
-            return f.read().strip()
-    return 'You are Jarvis, a local offline assistant. Always ask for explicit permission before executing system commands.'
+        try:
+            with open(SYSTEM_PROMPT_PATH, 'r', encoding='utf-8') as f:
+                base = f.read().strip()
+        except: pass
+    # Inject Today Date dynamically (research: Llama3.1 benefits from explicit date in system header)
+    try:
+        today = datetime.now().strftime("%B %d, %Y")
+        if "Today Date:" not in base:
+            base = base + f"\n\nToday Date: {today}"
+    except: pass
+    return base
 
 
 def init_db():
@@ -274,17 +336,162 @@ def build_media_config(cfg):
     return media_config
 
 
-def safe_cleanup_tmp():
+def safe_read_pendrive_file(requested_path, max_bytes=65536):
+    """Read-only preview of files strictly inside the pendrive BASE_DIR.
+
+    No approval needed — but never escapes BASE_DIR. Rejects absolute
+    host paths, parent traversal, and binary/non-utf8 files.
+    """
+    if not requested_path or not requested_path.strip():
+        return "Usage: /read <path inside pendrive>  e.g. /read brain/docs/notes.txt", False
+    # Normalize and resolve strictly inside BASE_DIR
+    requested_path = requested_path.strip().strip('"').strip("'")
+    # Block shell operators early
+    if any(c in requested_path for c in ['|', '&', ';', '`', '$', '%', '\n', '\r']):
+        return "Invalid path — shell operators not allowed.", False
+    # Prevent absolute or drive-letter paths
+    if os.path.isabs(requested_path) or re.match(r'^[a-zA-Z]:', requested_path):
+        return "Only relative paths inside the pendrive are allowed (e.g. brain/docs/file.txt).", False
+    candidate = os.path.abspath(os.path.join(BASE_DIR, requested_path))
+    base_abs = os.path.abspath(BASE_DIR)
+    # Ensure candidate is inside BASE_DIR
+    if not candidate.startswith(base_abs + os.sep) and candidate != base_abs:
+        return "Path escapes pendrive directory — not allowed.", False
+    if not os.path.exists(candidate):
+        return f"File not found on pendrive: {requested_path}", False
+    if os.path.isdir(candidate):
+        try:
+            entries = os.listdir(candidate)[:30]
+            header = f"Directory: {requested_path} ({len(entries)} entries shown)\n"
+            return header + "\n".join(entries), True
+        except Exception as e:
+            return f"Cannot list directory: {e}", False
+    # Size guard
+    try:
+        size = os.path.getsize(candidate)
+        if size > max_bytes:
+            return f"File too large ({size} bytes, limit {max_bytes}). Use a smaller file.", False
+    except Exception as e:
+        return f"Cannot stat file: {e}", False
+    # Only allow text-like extensions or try utf-8 decode
+    allowed_exts = {'.txt', '.md', '.json', '.py', '.log', '.ini', '.cfg', '.csv', '.html', '.css', '.js', '.bat', '.ps1', '.ahk'}
+    ext = os.path.splitext(candidate)[1].lower()
+    # If extension not in allowed list, still try utf-8 but warn
+    try:
+        with open(candidate, 'r', encoding='utf-8') as f:
+            content = f.read(max_bytes)
+        if not content.strip():
+            content = "(file is empty)"
+        # Truncate display
+        if len(content) > 4000:
+            content = content[:4000] + "\n... (truncated)"
+        return content, True
+    except UnicodeDecodeError:
+        return "Binary file — cannot display as text.", False
+    except Exception as e:
+        return f"Cannot read file: {e}", False
+
+
+def secure_erase_file(path, do_overwrite=True):
+    """Best-effort secure erase: overwrite then delete (for amnesiac guarantee)."""
+    try:
+        if not os.path.exists(path) or os.path.isdir(path):
+            return False
+        if do_overwrite:
+            try:
+                size = os.path.getsize(path)
+                if size and size < 8*1024*1024:
+                    with open(path, 'r+b') as f:
+                        f.write(os.urandom(size))
+                        f.flush()
+                        try: os.fsync(f.fileno())
+                        except: pass
+                        f.seek(0)
+                        f.write(b"\x00"*size)
+                        f.flush()
+            except: pass
+        os.remove(path)
+        return True
+    except: return False
+
+def safe_cleanup_tmp(secure: bool = True):
+    """Erase all pendrive tmp files. Secure overwrite by default for amnesiac mode."""
     try:
         for name in os.listdir(TMP_DIR):
             path = os.path.join(TMP_DIR, name)
             try:
                 if os.path.isfile(path):
-                    os.remove(path)
-            except Exception:
-                pass
-    except Exception:
-        pass
+                    if secure and host_cleaner:
+                        try: host_cleaner.secure_delete(host_cleaner.Path(path), do_overwrite=True)
+                        except: os.remove(path)
+                    else:
+                        # fallback overwrite
+                        secure_erase_file(path, do_overwrite=secure)
+                elif os.path.isdir(path):
+                    import shutil
+                    shutil.rmtree(path, ignore_errors=True)
+            except: pass
+    except: pass
+
+def host_cleanup_on_exit(drive_root: str | None = None, why: str = "exit"):
+    """Erase host traces on normal exit / power-off. Never raises."""
+    try:
+        if host_cleaner:
+            # On removal/shutdown we do full amnesiac; on normal exit we keep Jampandu dir but wipe clipboard/temp
+            is_removal = drive_root is not None and drive_root != "exit"
+            host_cleaner.full_host_cleanup(
+                drive_root=drive_root if drive_root and drive_root != "exit" else None,
+                secure=True, kill_processes=is_removal, clear_clip=True, log=not is_removal
+            )
+        else:
+            # Fallback without host_cleaner: just clear clipboard
+            if os.name == "nt":
+                try:
+                    import ctypes
+                    ctypes.windll.user32.OpenClipboard(0)
+                    ctypes.windll.user32.EmptyClipboard()
+                    ctypes.windll.user32.CloseClipboard()
+                except: pass
+    except: pass
+    # Always wipe pendrive auth token + tmp securely
+    try:
+        tok = AUTH_TOKEN_PATH
+        if os.path.exists(tok):
+            secure_erase_file(tok, True)
+    except: pass
+
+# Register atexit + Windows console control handler for power-off / shutdown
+def _register_shutdown_handlers():
+    try: atexit.register(lambda: host_cleanup_on_exit(why="atexit"))
+    except: pass
+    try:
+        signal.signal(signal.SIGINT, lambda s,f: (host_cleanup_on_exit(why="SIGINT"), sys.exit(0)))
+        signal.signal(signal.SIGTERM, lambda s,f: (host_cleanup_on_exit(why="SIGTERM"), sys.exit(0)))
+    except: pass
+    # Windows: handle CTRL_SHUTDOWN_EVENT / CTRL_LOGOFF_EVENT / CTRL_CLOSE_EVENT
+    if os.name == "nt":
+        try:
+            import ctypes
+            from ctypes import wintypes
+            kernel32 = ctypes.windll.kernel32
+            CTRL_C_EVENT = 0
+            CTRL_CLOSE_EVENT = 2
+            CTRL_LOGOFF_EVENT = 5
+            CTRL_SHUTDOWN_EVENT = 6
+            HandlerRoutine = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.DWORD)
+            def _handler(ctrl_type):
+                if ctrl_type in (CTRL_C_EVENT, CTRL_CLOSE_EVENT, CTRL_LOGOFF_EVENT, CTRL_SHUTDOWN_EVENT):
+                    host_cleanup_on_exit(why=f"CTRL_{ctrl_type}")
+                    # Give cleaner a moment
+                    time.sleep(0.5)
+                return False  # let next handler run too
+            _c_handler = HandlerRoutine(_handler)
+            # Keep reference so GC doesn't collect
+            _register_shutdown_handlers._c_handler = _c_handler
+            kernel32.SetConsoleCtrlHandler(_c_handler, True)
+        except: pass
+
+_register_shutdown_handlers()
 
 
 def _pid_is_running(pid):
@@ -314,7 +521,8 @@ def detect_unclean_shutdown():
         if os.path.exists(lock):
             # read pid
             try:
-                pid = int(open(lock).read().strip())
+                with open(lock, 'r', encoding='utf-8', errors='ignore') as _lf:
+                    pid = int(_lf.read().strip())
                 # check if pid is running
                 if pid and _pid_is_running(pid):
                     return False
@@ -345,6 +553,7 @@ def main():
         print(rgb(180,255,200) + 'Using JARVIS_AUTO_PASSWORD from environment.' + RESET)
     else:
         pw = getpass(rgb(200,200,255) + 'Enter agent password: ' + RESET)
+    print(rgb(200,200,255) + 'Verifying password...' + RESET, flush=True)
     if not verify_verifier(pw, cfg.get('password_verifier')):
         print(rgb(255,120,120) + 'Incorrect password. Exiting.' + RESET)
         sys.exit(1)
@@ -359,8 +568,10 @@ def main():
         print(rgb(255,200,150) + 'Detected previous unclean shutdown or leftover temp files. Cleaning temp files to protect host integrity.' + RESET)
         safe_cleanup_tmp()
 
-    llama_bin = os.path.join(BASE_DIR, cfg.get('llama_bin')) if not os.path.isabs(cfg.get('llama_bin')) else cfg.get('llama_bin')
-    model_path = os.path.join(BASE_DIR, cfg.get('model_path')) if not os.path.isabs(cfg.get('model_path')) else cfg.get('model_path')
+    _llama_bin_raw = cfg.get('llama_bin') or ''
+    _model_path_raw = cfg.get('model_path') or ''
+    llama_bin = _llama_bin_raw if os.path.isabs(_llama_bin_raw) else os.path.join(BASE_DIR, _llama_bin_raw)
+    model_path = _model_path_raw if os.path.isabs(_model_path_raw) else os.path.join(BASE_DIR, _model_path_raw)
     cmd_template = cfg.get('llama_cmd_template')
 
     if not os.path.exists(llama_bin):
@@ -371,7 +582,8 @@ def main():
     history = []
     session_lock = os.path.join(TMP_DIR, 'session.lock')
     try:
-        open(session_lock, 'w').write(str(os.getpid()))
+        with open(session_lock, 'w', encoding='utf-8') as _lf:
+            _lf.write(str(os.getpid()))
     except Exception:
         pass
 
@@ -412,6 +624,7 @@ def main():
     # Initialize task executor for system actions
     task_executor = TaskExecutor({
         'default_search': cfg.get('default_search', 'google'),
+        'internet_allowed': internet_allowed,
     })
 
     try:
@@ -447,15 +660,21 @@ def main():
                 print('/volume <0-100>   - Set volume level')
                 print('/songs            - List available songs')
                 print('/stop             - Stop playback')
+                print('/pause /next      - Pause / next track (VLC)')
                 print()
                 print('=== Voice Commands ===')
                 print('/voice            - Toggle voice input/output mode')
                 print('/voice_status     - Show voice assistant status')
                 print()
+                print('=== Pendrive Files (offline, no approval) ===')
+                print('/read <path>      - Show text file inside pendrive (e.g. /read brain/docs/notes.txt)')
+                print('/ls <path>        - List directory inside pendrive (e.g. /ls brain)')
+                print()
                 print('=== System Commands ===')
                 print('/run <cmd>        - Request to run a privileged system command (requires approval)')
                 print('/enable_internet  - Temporarily allow internet access (requires password)')
                 print('/disable_internet - Disable internet access')
+                print('/open_browser     - Open Brave (or the default browser); requires internet enabled')
                 print('/help             - Show this help')
                 print('exit              - Quit agent' + RESET + '\n')
                 continue
@@ -525,6 +744,42 @@ def main():
                     voice.speak(response)
                 continue
 
+            # Enhanced media controls — pause/next/prev/queue/stop (no approval)
+            if user_lower in ('/pause', '/resume', '/next', '/prev', '/previous', '/skip', '/queue', '/stop') or user_lower.startswith('/queue ') or user_lower.startswith('/play_next '):
+                # Normalize "/play_next X" -> "queue X"
+                cmd = user.lstrip('/')
+                if cmd.startswith('play_next '):
+                    cmd = 'queue ' + cmd[len('play_next '):]
+                response, success = handle_media_command(media, cmd)
+                print(rgb(200,255,200) + response + RESET)
+                if voice_mode and voice and voice.config.get('tts_enabled'):
+                    voice.speak(response)
+                continue
+            if user_lower.startswith('pause') or user_lower.startswith('resume') or user_lower.startswith('next') or user_lower.startswith('skip'):
+                response, success = handle_media_command(media, user.lstrip('/'))
+                print(rgb(200,255,200) + response + RESET)
+                if voice_mode and voice and voice.config.get('tts_enabled'):
+                    voice.speak(response)
+                continue
+
+            # Pendrive-only file preview (read-only, no approval, no host escape)
+            if user_lower.startswith('/read ') or user_lower.startswith('/cat ') or user_lower.startswith('/show ') or user_lower.startswith('/view ') or user_lower in ('/read', '/cat', '/show', '/view'):
+                # Extract path after first space, if any
+                if ' ' in user:
+                    req_path = user.split(' ', 1)[1].strip()
+                else:
+                    req_path = ''
+                content, ok = safe_read_pendrive_file(req_path)
+                color = rgb(200,255,200) if ok else rgb(255,200,150)
+                print(color + content + RESET)
+                continue
+            if user_lower.startswith('/ls ') or user_lower in ('/ls', '/dir', '/list'):
+                req_path = user.split(' ', 1)[1].strip() if ' ' in user else '.'
+                content, ok = safe_read_pendrive_file(req_path)
+                color = rgb(200,255,200) if ok else rgb(255,200,150)
+                print(color + content + RESET)
+                continue
+
             if user.lower() == '/enable_internet':
                 # require password confirmation
                 pw2 = getpass('Confirm password to enable internet: ')
@@ -532,11 +787,28 @@ def main():
                     print(rgb(255,120,120) + 'Incorrect password. Internet not enabled.' + RESET)
                     continue
                 internet_allowed = True
+                task_executor.internet_allowed = True
                 print(rgb(200,255,180) + 'Internet access enabled for this session. Use /disable_internet to turn it off.' + RESET)
                 continue
             if user.lower() == '/disable_internet':
                 internet_allowed = False
+                task_executor.internet_allowed = False
                 print(rgb(255,220,200) + 'Internet access disabled.' + RESET)
+                continue
+
+            if user.lower() == '/open_browser':
+                # Opening a browser is a network-enabling action, so it rides
+                # the same internet gate as everything else -- not a separate
+                # privilege. No user-supplied path/URL is ever involved.
+                if not internet_allowed:
+                    print(rgb(255,200,150) + 'Internet is disabled. Run /enable_internet first (password required).' + RESET)
+                    continue
+                ok, which = launch_browser()
+                if ok:
+                    print(rgb(200,255,200) + f'Opened {which}.' + RESET)
+                    append_db(conn, 'system', f'OPENED_BROWSER: {which}')
+                else:
+                    print(rgb(255,150,150) + f'Could not open {which}.' + RESET)
                 continue
 
             if user.startswith('/run '):
@@ -592,9 +864,8 @@ def main():
             # conversational flow
             append_db(conn, 'user', user)
 
-            prompt_parts = [system_prompt, '\n']
+            # Recent history (last ~12 turns) for context.
             slice_history = []
-            # include last up to 6 turns by reading recent from DB (lightweight)
             try:
                 c = conn.cursor()
                 c.execute('SELECT role, text FROM conversation ORDER BY id DESC LIMIT 12')
@@ -603,71 +874,90 @@ def main():
                     slice_history.append((r[0], r[1]))
             except Exception:
                 pass
+
+            # Chat-format messages for the warm server (fast path)...
+            messages = [{'role': 'system', 'content': system_prompt}]
             for role, text in slice_history:
-                if role == 'user':
-                    prompt_parts.append('User: ' + text + '\n')
-                else:
-                    prompt_parts.append('Assistant: ' + text + '\n')
+                messages.append({'role': 'assistant' if role == 'assistant' else 'user', 'content': text})
+            # ...and a flat prompt for the cold llama.exe fallback.
+            prompt_parts = [system_prompt, '\n']
+            for role, text in slice_history:
+                prompt_parts.append(('User: ' if role == 'user' else 'Assistant: ') + text + '\n')
             prompt_parts.append('Assistant:')
             full_prompt = '\n'.join(prompt_parts)
 
-            # write prompt to pendrive-only temp file
-            prompt_file = os.path.join(TMP_DIR, f'prompt_{int(time.time()*1000)}.txt')
-            with open(prompt_file, 'w', encoding='utf-8') as pf:
-                pf.write(full_prompt)
+            output = None
+            used_warm = False
+            # Fast path: reuse (or start once) the shared warm llama-server so we
+            # don't cold-load the ~3.7GB model on every message.
+            try:
+                if llama_server and llama_server.ensure_server(timeout=180):
+                    output = llama_server.chat(messages, temperature=0.7, timeout=120)
+                    used_warm = bool(output)
+            except Exception:
+                output = None
+                used_warm = False
 
-            if os.path.exists(llama_bin) and os.path.exists(model_path):
-                # if internet is not allowed, ensure model command won't attempt network
-                if not internet_allowed and cfg.get('no_internet'):
-                    # run inference normally offline
-                    pass
-                cmd_str = cmd_template.format(bin=shlex.quote(llama_bin), model=shlex.quote(model_path), prompt_file=shlex.quote(prompt_file))
-                cmd = shlex.split(cmd_str)
+            if not used_warm and os.path.exists(llama_bin) and os.path.exists(model_path):
+                # Cold fallback: single-shot llama.exe with a pendrive-only temp prompt.
+                prompt_file = os.path.join(TMP_DIR, f'prompt_{int(time.time()*1000)}.txt')
                 try:
+                    with open(prompt_file, 'w', encoding='utf-8') as pf:
+                        pf.write(full_prompt)
+                    cmd_str = cmd_template.format(bin=shlex.quote(llama_bin), model=shlex.quote(model_path), prompt_file=shlex.quote(prompt_file))
+                    cmd = shlex.split(cmd_str, posix=False) if os.name == 'nt' else shlex.split(cmd_str)
                     proc = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
                     output = proc.stdout.strip() or proc.stderr.strip()
-                    print('\n' + bold(rgb(200,240,255) + 'Assistant:') + '\n')
-                    print(gradient_text(output[:200], (180,255,200), (200,200,255)))
-                    if len(output) > 200:
-                        print(output[200:])
-                    print('\n')
-                    append_db(conn, 'assistant', output)
-                    # Speak response in voice mode
-                    if voice_mode and voice and voice.config.get('tts_enabled'):
-                        # Speak a shortened version if too long
-                        speak_text = output[:300] + '...' if len(output) > 300 else output
-                        voice.speak(speak_text)
                 except Exception as e:
                     print(rgb(255,150,150) + f'Error running inference binary: {e}' + RESET)
-                    error_msg = 'Assistant: (inference failed — see logs)'
-                    print(error_msg)
-                    append_db(conn, 'assistant', '(inference failed)')
-                    if voice_mode and voice and voice.config.get('tts_enabled'):
-                        voice.speak('Sorry, I encountered an error.')
-            else:
+                    output = None
+                finally:
+                    try:
+                        if os.path.exists(prompt_file):
+                            secure_erase_file(prompt_file, True)
+                    except Exception:
+                        pass
+
+            if output:
+                print('\n' + bold(rgb(200,240,255) + 'Assistant:') + '\n')
+                print(gradient_text(output[:200], (180,255,200), (200,200,255)))
+                if len(output) > 200:
+                    print(output[200:])
+                print('\n')
+                append_db(conn, 'assistant', output)
+                # Speak response in voice mode
+                if voice_mode and voice and voice.config.get('tts_enabled'):
+                    speak_text = output[:300] + '...' if len(output) > 300 else output
+                    voice.speak(speak_text)
+            elif not (os.path.exists(llama_bin) and os.path.exists(model_path)):
                 fallback = "(No local model/binary found. Place model at '{}' and binary at '{}' and update config.json.)".format(model_path, llama_bin)
                 print('\n' + bold(rgb(255,220,200) + 'Assistant:') + '\n')
                 print(fallback + '\n')
                 append_db(conn, 'assistant', fallback)
                 if voice_mode and voice and voice.config.get('tts_enabled'):
                     voice.speak(fallback)
-
-            # cleanup prompt file immediately
-            try:
-                if os.path.exists(prompt_file):
-                    os.remove(prompt_file)
-            except Exception:
-                pass
+            else:
+                error_msg = 'Assistant: (inference failed — see logs)'
+                print(rgb(255,150,150) + error_msg + RESET)
+                append_db(conn, 'assistant', '(inference failed)')
+                if voice_mode and voice and voice.config.get('tts_enabled'):
+                    voice.speak('Sorry, I encountered an error.')
 
     finally:
         try:
             if os.path.exists(session_lock):
-                os.remove(session_lock)
+                secure_erase_file(session_lock, True)
         except Exception:
             pass
-        safe_cleanup_tmp()
+        safe_cleanup_tmp(secure=True)
+        # Amnesiac: erase host traces on ANY exit (including power-off via atexit handler)
+        # Passing None => normal-exit clean (keeps watcher task but wipes clipboard/temp)
+        # Power-off/removal will call with drive letter via watcher/emergency_clean
+        host_cleanup_on_exit(why="finally")
         # save whether internet was allowed this session? Do not persist by default
-        conn.close()
+        try: conn.close()
+        except: pass
+        # Final defense: if this process was killed by power-off, emergency_clean.ps1 Task will also run
 
 if __name__ == '__main__':
     main()
