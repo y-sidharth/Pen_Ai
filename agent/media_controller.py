@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Media controller for Jarvis - provides media playback and system audio control.
+Media controller for Jampandu - provides media playback and system audio control.
 Supports local music playback, YouTube/Spotify control, and system volume.
 """
 import os
@@ -39,6 +39,8 @@ class MediaController:
         self.music_dirs = self.config.get('music_dirs', DEFAULT_MUSIC_DIRS)
         self.player = self.config.get('media_player', 'vlc')
         self._music_library = None
+        self._queue = []
+        self._current_index = -1
         
     def _find_music_files(self):
         """Scan music directories for audio files."""
@@ -205,16 +207,43 @@ class MediaController:
             return False
     
     def get_volume(self):
-        """Get current system volume level."""
+        """Get current system volume level (0-100) via CoreAudio endpoint."""
         try:
-            result = subprocess.run(
-                ['powershell', '-Command', 
-                 '(New-Object -ComObject WScript.Shell).Popup("Volume check", 0.1)'],
-                capture_output=True, timeout=2
+            ps = (
+                "Add-Type -AssemblyName System.Windows.Forms -ErrorAction SilentlyContinue; "
+                "try { "
+                "  Add-Type -TypeDefinition '"
+                "using System; using System.Runtime.InteropServices;"
+                "[Guid(\"5CDF2C82-841E-4546-9722-0CF74078229A\"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]"
+                "interface IAudioEndpointVolume { int _a(); int _b(); int _c(); int _d(); int GetMasterVolumeLevelScalar(out float pfLevel); }"
+                "[Guid(\"D666063F-1587-4E43-81F1-B948E807363F\"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]"
+                "interface IMMDevice { int Activate(ref Guid iid, int dwClsCtx, IntPtr pActivationParams, [MarshalAs(UnmanagedType.IUnknown)] out object ppInterface); }"
+                "class _V {}' -ErrorAction Stop; "
+                "  $v = 50; "
+                "  try { "
+                "    $o = [System.Activator]::CreateInstance([System.Type]::GetTypeFromCLSID('BCDE0395-E52F-467C-8E3D-C4579291692E'));"
+                "    $e = $o.GetType().GetMethod('GetDefaultAudioEndpoint').Invoke($o, @(0,1));"
+                "    $g=[Guid]'5CDF2C82-841E-4546-9722-0CF74078229A'; $a=$null;"
+                "    $e.Activate([ref]$g, 1, [IntPtr]::Zero, [ref]$a) | Out-Null;"
+                "    $lvl=[float]0; $a.GetMasterVolumeLevelScalar([ref]$lvl) | Out-Null;"
+                "    $v=[int][Math]::Round($lvl*100);"
+                "  } catch { $v = 50 }"
+                "  Write-Output $v; "
+                "} catch { Write-Output 50 }"
             )
-            # Alternative method using audio endpoint
-            return None  # Volume detection is complex, skip for now
-        except:
+            result = subprocess.run(
+                ['powershell', '-Command', ps],
+                capture_output=True, text=True, timeout=5
+            )
+            raw = (result.stdout or "").strip().splitlines()[-1].strip() if result.stdout else ""
+            try:
+                lvl = int(float(raw))
+                if 0 <= lvl <= 100:
+                    return lvl
+            except Exception:
+                pass
+            return None
+        except Exception:
             return None
     
     def _find_nircmd(self):
@@ -243,6 +272,72 @@ class MediaController:
             'total_albums': len(albums),
             'scanned_dirs': [d for d in self.music_dirs if os.path.isdir(d)],
         }
+
+    def pause(self):
+        """Pause current VLC playback (no new process)."""
+        vlc = self._find_player('vlc')
+        if vlc:
+            try:
+                # VLC RC interface not assumed; fallback to media keys
+                ps = "$wsh = New-Object -ComObject WScript.Shell; $wsh.SendKeys([char]179)"
+                subprocess.run(['powershell', '-Command', ps], capture_output=True, timeout=5)
+                return True
+            except Exception:
+                return False
+        try:
+            ps = "$wsh = New-Object -ComObject WScript.Shell; $wsh.SendKeys([char]179)"
+            subprocess.run(['powershell', '-Command', ps], capture_output=True, timeout=5)
+            return True
+        except Exception:
+            return False
+
+    def resume(self):
+        """Resume playback. Media Play/Pause key (VK 179) is a toggle, so
+        resume is intentionally the same key event as pause — document it
+        explicitly instead of silently aliasing."""
+        return self.pause()
+
+    def next_track(self):
+        if self._queue and self._current_index + 1 < len(self._queue):
+            self._current_index += 1
+            return self.play_song(self._queue[self._current_index]['path'])
+        # Fallback to media key Next Track
+        try:
+            ps = "$wsh = New-Object -ComObject WScript.Shell; $wsh.SendKeys([char]176)"
+            subprocess.run(['powershell', '-Command', ps], capture_output=True, timeout=5)
+            return True
+        except Exception:
+            return False
+
+    def prev_track(self):
+        if self._queue and self._current_index > 0:
+            self._current_index -= 1
+            return self.play_song(self._queue[self._current_index]['path'])
+        try:
+            ps = "$wsh = New-Object -ComObject WScript.Shell; $wsh.SendKeys([char]177)"
+            subprocess.run(['powershell', '-Command', ps], capture_output=True, timeout=5)
+            return True
+        except Exception:
+            return False
+
+    def queue_song(self, song_name):
+        matches = self.search_song(song_name)
+        if not matches:
+            return False, f"Could not find '{song_name}' to queue."
+        song = matches[0]
+        self._queue.append(song)
+        if self._current_index == -1:
+            self._current_index = 0
+        return True, f"Queued: {song['name']} (position {len(self._queue)})"
+
+    def get_queue(self):
+        if not self._queue:
+            return "Queue is empty."
+        lines = []
+        for i, s in enumerate(self._queue):
+            marker = "▶" if i == self._current_index else f"{i+1}."
+            lines.append(f"{marker} {s['name']}")
+        return "\n".join(lines)
 
 
 def parse_media_command(command):
@@ -289,6 +384,21 @@ def parse_media_command(command):
     if vol_match:
         return {'action': 'volume', 'level': int(vol_match.group(1))}
     
+    # Pause / resume
+    if cmd_lower in ('pause', '/pause', 'resume', '/resume'):
+        return {'action': 'pause'}
+    if cmd_lower in ('next', '/next', 'skip', '/skip', 'next track'):
+        return {'action': 'next'}
+    if cmd_lower in ('prev', '/prev', 'previous', '/previous', 'prev track'):
+        return {'action': 'prev'}
+    if 'queue' in cmd_lower:
+        q = re.sub(r'.*queue\s*', '', cmd_lower).strip()
+        if q:
+            return {'action': 'queue', 'query': q}
+        return {'action': 'queue_list'}
+    if cmd_lower in ('queue', '/queue', 'show queue'):
+        return {'action': 'queue_list'}
+
     # Stop/pause commands
     if any(word in cmd_lower for word in ['stop', 'pause', "that's all"]):
         return {'action': 'stop'}
@@ -341,6 +451,20 @@ def handle_media_command(controller, command):
             else:
                 return "Failed to adjust volume.", False
                 
+    elif action == 'pause':
+        ok = controller.pause()
+        return ("Paused." if ok else "Could not pause."), ok
+    elif action == 'next':
+        ok = controller.next_track()
+        return ("Skipped to next." if ok else "Could not skip."), ok
+    elif action == 'prev':
+        ok = controller.prev_track()
+        return ("Went to previous." if ok else "Could not go back."), ok
+    elif action == 'queue':
+        ok, msg = controller.queue_song(parsed.get('query',''))
+        return msg, ok
+    elif action == 'queue_list':
+        return controller.get_queue(), True
     elif action == 'stop':
         # Try to stop current playback
         try:
