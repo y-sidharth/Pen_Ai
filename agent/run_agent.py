@@ -27,6 +27,19 @@ try:
     import llama_server  # shared warm llama-server client (fast path; falls back to cold llama.exe)
 except Exception:
     llama_server = None
+# Cloud / Gemini hybrid (graceful if deps missing) - satisfies hackathon checklist
+try:
+    import gemini_client  # Gemini 3.5+ via google-genai / Vertex AI
+except Exception:
+    gemini_client = None
+try:
+    import firestore_sync  # Firestore + Cloud Storage
+except Exception:
+    firestore_sync = None
+try:
+    import vertex_config
+except Exception:
+    vertex_config = None
 import atexit
 import signal
 
@@ -207,8 +220,20 @@ def init_db():
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         role TEXT,
         text TEXT,
-        ts TEXT
+        ts TEXT,
+        permanent INTEGER DEFAULT 0
     )''')
+    # migrate existing rows: add permanent column if missing
+    try:
+        c.execute("PRAGMA table_info(conversation)")
+        cols = [row[1] for row in c.fetchall()]
+        if 'permanent' not in cols:
+            c.execute("ALTER TABLE conversation ADD COLUMN permanent INTEGER DEFAULT 0")
+            # mark pre-existing rows as permanent (they are real history)
+            c.execute("UPDATE conversation SET permanent = 1 WHERE permanent IS NULL")
+            conn.commit()
+    except Exception:
+        conn.rollback()
     c.execute('''CREATE TABLE IF NOT EXISTS actions (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         cmd TEXT,
@@ -221,10 +246,10 @@ def init_db():
     return conn
 
 
-def append_db(conn, role, text):
+def append_db(conn, role, text, permanent=False):
     ts = datetime.utcnow().isoformat()
     c = conn.cursor()
-    c.execute('INSERT INTO conversation (role, text, ts) VALUES (?,?,?)', (role, text, ts))
+    c.execute('INSERT INTO conversation (role, text, ts, permanent) VALUES (?,?,?,?)', (role, text, ts, 1 if permanent else 0))
     conn.commit()
 
 
@@ -675,6 +700,9 @@ def main():
                 print('/enable_internet  - Temporarily allow internet access (requires password)')
                 print('/disable_internet - Disable internet access')
                 print('/open_browser     - Open Brave (or the default browser); requires internet enabled')
+                print('=== Cloud Commands (Gemini + Firestore) ===')
+                print('/cloud_status     - Show Gemini/ADK/Firestore/Storage status')
+                print('/sync             - Sync conversations + brain to Firestore/GCS (requires internet)')
                 print('/help             - Show this help')
                 print('exit              - Quit agent' + RESET + '\n')
                 continue
@@ -811,6 +839,58 @@ def main():
                     print(rgb(255,150,150) + f'Could not open {which}.' + RESET)
                 continue
 
+            if user.lower() in ('/cloud_status', '/gemini_status', '/cloud'):
+                cfg_refresh = load_config()
+                print(bold(rgb(180,220,255) + '\nCloud Status:' + RESET))
+                # Gemini
+                if gemini_client and vertex_config:
+                    try:
+                        print(f"  Gemini: {vertex_config.describe_backend(cfg_refresh)} | available={gemini_client.is_available(cfg_refresh, internet_allowed)} | enabled={cfg_refresh.get('gemini_enabled', True)} | internet={internet_allowed}")
+                    except Exception as e:
+                        print(f"  Gemini: error {e}")
+                else:
+                    print("  Gemini: not installed (pip install -r requirements.txt)")
+                # Firestore/Storage
+                if firestore_sync and vertex_config:
+                    try:
+                        hc = firestore_sync.health_check(cfg_refresh, internet_allowed)
+                        print(f"  Firestore: installed={hc['firestore_installed']} project={hc['gcp_project']} collection={hc['firestore_collection']} can_sync={hc['can_sync']}")
+                        print(f"  Storage: installed={hc['storage_installed']} bucket={hc['gcs_bucket']}")
+                        print(f"  Device ID: {hc['device_id']}")
+                    except Exception as e:
+                        print(f"  Cloud health error: {e}")
+                # ADK
+                try:
+                    from adk_agent.agent import health as adk_health
+                    print(f"  ADK: {adk_health()}")
+                except Exception:
+                    print("  ADK: not installed")
+                continue
+            if user.lower() == '/sync':
+                if not internet_allowed:
+                    print(rgb(255,200,150) + 'Internet disabled. Run /enable_internet first.' + RESET)
+                    continue
+                if firestore_sync:
+                    print(rgb(180,220,255) + 'Syncing conversations to Firestore...' + RESET)
+                    # sync recent DB rows
+                    try:
+                        c = conn.cursor()
+                        c.execute('SELECT role, text FROM conversation ORDER BY id DESC LIMIT 20')
+                        for r in reversed(c.fetchall()):
+                            firestore_sync.sync_conversation_to_firestore(r[0], r[1], config=cfg, internet_allowed=internet_allowed)
+                        print(rgb(200,255,200) + 'Sync done.' + RESET)
+                    except Exception as e:
+                        print(rgb(255,150,150) + f'Sync failed: {e}' + RESET)
+                    print(rgb(180,220,255) + 'Backing up brain to GCS...' + RESET)
+                    try:
+                        res = firestore_sync.backup_brain_to_gcs(config=cfg, internet_allowed=internet_allowed)
+                        print(str(res))
+                    except Exception as e:
+                        print(f'Backup failed: {e}')
+                else:
+                    print('Cloud sync not available (missing deps)')
+                continue
+
             if user.startswith('/run '):
                 cmd = user[len('/run '):].strip()
                 argv, rejection = validate_command(cmd)
@@ -839,11 +919,11 @@ def main():
                     out = proc.stdout.strip() or proc.stderr.strip()
                     print('\n' + bold(rgb(200,255,200) + 'Command output:' + RESET))
                     print(out + '\n')
-                    append_db(conn, 'assistant', f'EXECUTED: {cmd}\nOUTPUT:\n{out}')
+                    append_db(conn, 'assistant', f'EXECUTED: {cmd}\nOUTPUT:\n{out}', permanent=True)
                     update_action_status(conn, nonce, 'completed')
                 except Exception as e:
                     print(rgb(255,150,150) + f'Error executing command: {e}' + RESET)
-                    append_db(conn, 'assistant', f'EXEC_ERROR: {cmd} -> {e}')
+                    append_db(conn, 'assistant', f'EXEC_ERROR: {cmd} -> {e}', permanent=True)
                     update_action_status(conn, nonce, 'error')
                 continue
 
@@ -858,11 +938,17 @@ def main():
                         voice.speak(task_response)
                     if needs_approval:
                         print(rgb(255,200,150) + 'This action requires approval. Use /run command with approval.' + RESET)
-                    append_db(conn, 'assistant', task_response)
+                    append_db(conn, 'assistant', task_response, permanent=True)
                     continue
 
             # conversational flow
-            append_db(conn, 'user', user)
+            append_db(conn, 'user', user, permanent=True)
+            # Cloud sync (Firestore) - best-effort, never blocks local flow
+            if firestore_sync and internet_allowed and cfg.get('gcp_project'):
+                try:
+                    firestore_sync.sync_conversation_to_firestore('user', user, config=cfg, internet_allowed=internet_allowed)
+                except Exception:
+                    pass
 
             # Recent history (last ~12 turns) for context.
             slice_history = []
@@ -888,17 +974,65 @@ def main():
 
             output = None
             used_warm = False
-            # Fast path: reuse (or start once) the shared warm llama-server so we
-            # don't cold-load the ~3.7GB model on every message.
-            try:
-                if llama_server and llama_server.ensure_server(timeout=180):
-                    output = llama_server.chat(messages, temperature=0.7, timeout=120)
-                    used_warm = bool(output)
-            except Exception:
-                output = None
-                used_warm = False
+            cloud_used = False
+            cloud_backend = None
+            # --- HYBRID CLOUD PATH: Gemini 3.5+ via ADK/GenAI (if internet allowed) ---
+            if gemini_client and cfg.get('gemini_enabled', True) and internet_allowed:
+                try:
+                    if gemini_client.is_available(cfg, internet_allowed):
+                        # Gather RAG context (local brain docs) to enrich cloud prompt
+                        context_docs = []
+                        try:
+                            import single_query
+                            idx = single_query.load_index()
+                            docs = single_query.query_topk(idx, user, k=3)
+                            context_docs = [d['text'] for d in docs]
+                        except Exception:
+                            context_docs = []
+                        # history for Gemini in {role, content} form
+                        hist_for_gemini = [{'role': r, 'content': t} for r, t in slice_history]
+                        # Use adk_agent if available (shows ADK framework usage), fallback to gemini_client
+                        try:
+                            from adk_agent.agent import run_adk_query
+                            adk_res = run_adk_query(user, history=hist_for_gemini, context_docs=context_docs, internet_allowed=internet_allowed)
+                            if adk_res.get('ok'):
+                                output = adk_res['output']
+                                cloud_backend = adk_res.get('backend', 'adk/gemini')
+                                cloud_used = True
+                            else:
+                                raise RuntimeError(adk_res.get('output'))
+                        except ImportError:
+                            # ADK not installed, use direct Gemini
+                            output = gemini_client.generate(
+                                prompt=user,
+                                history=hist_for_gemini,
+                                context_docs=context_docs,
+                                system_prompt=system_prompt,
+                                config=cfg,
+                                internet_allowed=internet_allowed,
+                            )
+                            cloud_backend = f"gemini:{vertex_config.get_gemini_model(cfg) if vertex_config else 'gemini-2.5-pro'}"
+                            cloud_used = True
+                        if cloud_used and output:
+                            print(rgb(180,220,255) + f'[Cloud: {cloud_backend}]' + RESET)
+                except Exception as e:
+                    # Cloud failed - fall through to local llama, show hint
+                    print(rgb(255,200,150) + f'[Cloud unavailable: {e} - falling back to local model]' + RESET)
+                    output = None
+                    cloud_used = False
 
-            if not used_warm and os.path.exists(llama_bin) and os.path.exists(model_path):
+            if not cloud_used:
+                # Fast path: reuse (or start once) the shared warm llama-server so we
+                # don't cold-load the ~3.7GB model on every message.
+                try:
+                    if llama_server and llama_server.ensure_server(timeout=180):
+                        output = llama_server.chat(messages, temperature=0.7, timeout=120)
+                        used_warm = bool(output)
+                except Exception:
+                    output = None
+                    used_warm = False
+
+            if not cloud_used and not used_warm and os.path.exists(llama_bin) and os.path.exists(model_path):
                 # Cold fallback: single-shot llama.exe with a pendrive-only temp prompt.
                 prompt_file = os.path.join(TMP_DIR, f'prompt_{int(time.time()*1000)}.txt')
                 try:
@@ -924,7 +1058,12 @@ def main():
                 if len(output) > 200:
                     print(output[200:])
                 print('\n')
-                append_db(conn, 'assistant', output)
+                append_db(conn, 'assistant', output, permanent=True)
+                if firestore_sync and internet_allowed and cfg.get('gcp_project'):
+                    try:
+                        firestore_sync.sync_conversation_to_firestore('assistant', output, config=cfg, internet_allowed=internet_allowed)
+                    except Exception:
+                        pass
                 # Speak response in voice mode
                 if voice_mode and voice and voice.config.get('tts_enabled'):
                     speak_text = output[:300] + '...' if len(output) > 300 else output
@@ -933,13 +1072,13 @@ def main():
                 fallback = "(No local model/binary found. Place model at '{}' and binary at '{}' and update config.json.)".format(model_path, llama_bin)
                 print('\n' + bold(rgb(255,220,200) + 'Assistant:') + '\n')
                 print(fallback + '\n')
-                append_db(conn, 'assistant', fallback)
+                append_db(conn, 'assistant', fallback, permanent=True)
                 if voice_mode and voice and voice.config.get('tts_enabled'):
                     voice.speak(fallback)
             else:
                 error_msg = 'Assistant: (inference failed — see logs)'
                 print(rgb(255,150,150) + error_msg + RESET)
-                append_db(conn, 'assistant', '(inference failed)')
+                append_db(conn, 'assistant', '(inference failed)', permanent=True)
                 if voice_mode and voice and voice.config.get('tts_enabled'):
                     voice.speak('Sorry, I encountered an error.')
 

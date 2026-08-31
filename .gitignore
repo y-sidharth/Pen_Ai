@@ -19,3 +19,16 @@ AUTOSTART.marker
 # Python caches
 __pycache__/
 *.py[cod]
+
+# Cloud / secrets - do not commit API keys or GCP creds
+agent/.env
+agent/.gcloud/
+.env
+*.key
+*.json.key
+
+# Local leftovers
+*.bak
+*.lnk
+agent/resume.log
+

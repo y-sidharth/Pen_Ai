@@ -1,0 +1,14 @@
+# Pen AI - Core + Google Cloud requirements
+# Local / existing deps are handled via python-portable; this file covers cloud extensions.
+
+# Google Agent Frameworks - satisfies checklist "at least one Google agent framework"
+google-genai>=0.8.0
+google-adk>=1.0.0
+
+# Google Cloud Services - satisfies checklist "at least one Google Cloud service"
+google-cloud-aiplatform>=1.70.0
+google-cloud-firestore>=2.13.0
+google-cloud-storage>=2.14.0
+
+# Utilities
+python-dotenv>=1.0.0

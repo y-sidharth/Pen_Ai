@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """
-Task executor for Jarvis - performs system actions and tasks based on natural language commands.
+Task executor for Jampandu - performs system actions and tasks based on natural language commands.
 Handles application launching, web searches, file operations, and system control.
 """
 import os
 import sys
 import subprocess
 import re
+import shutil
 import webbrowser
 from pathlib import Path
 
@@ -39,6 +40,74 @@ SEARCH_PROVIDERS = {
     'duckduckgo': 'https://duckduckgo.com/?q=',
 }
 
+# Apps that reach the network (a browser, or something that opens one).
+# These must respect the same internet gate as /enable_internet -- natural
+# language phrasing is not a separate, weaker permission path.
+NETWORK_APPS = {'browser', 'chrome', 'firefox', 'edge', 'spotify'}
+
+# Incognito-by-default launcher: Brave -> Chrome -> Edge -> Firefox private,
+# fall back to normal webbrowser.open only if none found ("come out of it when necessary").
+_BRAVE_CANDIDATES = [
+    os.path.expandvars(r'%ProgramFiles%\BraveSoftware\Brave-Browser\Application\brave.exe'),
+    os.path.expandvars(r'%ProgramFiles(x86)%\BraveSoftware\Brave-Browser\Application\brave.exe'),
+    os.path.expandvars(r'%LocalAppData%\BraveSoftware\Brave-Browser\Application\brave.exe'),
+]
+_CHROME_CANDIDATES = [
+    os.path.expandvars(r'%ProgramFiles%\Google\Chrome\Application\chrome.exe'),
+    os.path.expandvars(r'%ProgramFiles(x86)%\Google\Chrome\Application\chrome.exe'),
+    os.path.expandvars(r'%LocalAppData%\Google\Chrome\Application\chrome.exe'),
+]
+_EDGE_CANDIDATES = [
+    os.path.expandvars(r'%ProgramFiles(x86)%\Microsoft\Edge\Application\msedge.exe'),
+    os.path.expandvars(r'%ProgramFiles%\Microsoft\Edge\Application\msedge.exe'),
+]
+_FIREFOX_CANDIDATES = [
+    os.path.expandvars(r'%ProgramFiles%\Mozilla Firefox\firefox.exe'),
+    os.path.expandvars(r'%ProgramFiles(x86)%\Mozilla Firefox\firefox.exe'),
+]
+
+
+def _open_url_incognito(url: str) -> bool:
+    """Try to open URL in private/incognito mode. Returns True if launched via private flag."""
+    # Brave incognito
+    for cand in _BRAVE_CANDIDATES:
+        if os.path.exists(cand):
+            try:
+                subprocess.Popen([cand, "--incognito", url], close_fds=True)
+                return True
+            except Exception:
+                pass
+    # Chrome incognito
+    for cand in _CHROME_CANDIDATES:
+        if os.path.exists(cand):
+            try:
+                subprocess.Popen([cand, "--incognito", url], close_fds=True)
+                return True
+            except Exception:
+                pass
+    # Edge InPrivate
+    for cand in _EDGE_CANDIDATES:
+        if os.path.exists(cand):
+            try:
+                subprocess.Popen([cand, "--inprivate", url], close_fds=True)
+                return True
+            except Exception:
+                pass
+    # Firefox private-window
+    for cand in _FIREFOX_CANDIDATES:
+        if os.path.exists(cand):
+            try:
+                subprocess.Popen([cand, "--private-window", url], close_fds=True)
+                return True
+            except Exception:
+                pass
+    # Fallback: default browser normal window (graceful degrade)
+    try:
+        webbrowser.open(url)
+        return False
+    except Exception:
+        return False
+
 
 class TaskExecutor:
     """Executes system tasks and actions based on natural language commands."""
@@ -47,6 +116,10 @@ class TaskExecutor:
         self.config = config or {}
         self.allowed_apps = self.config.get('allowed_apps', list(SAFE_APPLICATIONS.keys()))
         self.default_search = self.config.get('default_search', 'google')
+        # Kept in sync by the caller (run_agent.py) whenever /enable_internet
+        # or /disable_internet changes it -- this is not just the value at
+        # construction time.
+        self.internet_allowed = bool(self.config.get('internet_allowed', False))
         self._action_history = []
         
     def parse_task(self, command):
@@ -100,10 +173,16 @@ class TaskExecutor:
             for name, app in app_map.items():
                 if name in app_name:
                     return {'action': 'open_app', 'app': app}
+            # "open <name> folder/directory" isn't an application -- route it
+            # to the folder opener instead of trying (and failing) to launch
+            # an app named e.g. "downloads folder".
+            folder_suffix = re.match(r'(?:the\s+)?(.+?)\s+(?:folder|directory)$', app_name)
+            if folder_suffix:
+                return {'action': 'open_folder', 'path': folder_suffix.group(1).strip()}
             return {'action': 'open_app', 'app': app_name}
         
         # Search commands
-        search_match = re.match(r'(?:search|google|look up|find)\s+(?:for\s+)?(.+?)(?:\s+on\s+(.+))?', cmd_lower)
+        search_match = re.match(r'(?:search|google|look up|find)\s+(?:for\s+)?(.+?)(?:\s+on\s+(.+))?$', cmd_lower)
         if search_match:
             query = search_match.group(1).strip()
             provider = search_match.group(2).strip() if search_match.group(2) else self.default_search
@@ -157,6 +236,22 @@ class TaskExecutor:
             return {'action': 'shutdown'}
         if any(phrase in cmd_lower for phrase in ["restart", "reboot"]):
             return {'action': 'restart'}
+        
+        # Bluetooth control - must be before generic "open" to avoid mis-parse
+        if "bluetooth" in cmd_lower:
+            # Check for on/off intent - order matters: check "turn off" before "turn on"
+            if any(p in cmd_lower for p in ["turn off", "switch off", "disable", "turn bluetooth off", "bluetooth off", "stop bluetooth"]):
+                return {'action': 'bluetooth_off'}
+            if any(p in cmd_lower for p in ["turn on", "switch on", "enable", "turn bluetooth on", "bluetooth on", "start bluetooth"]):
+                return {'action': 'bluetooth_on'}
+            # Generic "bluetooth" query -> toggle / status
+            if "bluetooth" in cmd_lower and len(cmd_lower.split()) <= 3:
+                return {'action': 'bluetooth_status'}
+            # Fallback: treat as bluetooth_on if ambiguous
+            if "on" in cmd_lower:
+                return {'action': 'bluetooth_on'}
+            if "off" in cmd_lower:
+                return {'action': 'bluetooth_off'}
         
         # Weather (opens search)
         if any(phrase in cmd_lower for phrase in ["weather", "what's the weather", "weather today"]):
@@ -234,28 +329,42 @@ class TaskExecutor:
             
         elif action == 'open_folder':
             return self._open_folder(task.get('path', ''))
+        
+        elif action == 'bluetooth_on':
+            return self._bluetooth_control(True)
+        elif action == 'bluetooth_off':
+            return self._bluetooth_control(False)
+        elif action == 'bluetooth_status':
+            return self._bluetooth_status()
             
         else:
             return f"Sorry, I don't know how to: {task.get('original', 'do that')}", False, False
     
     def _open_application(self, app_name):
-        """Open an application."""
+        """Open an application. Only apps explicitly listed in
+        SAFE_APPLICATIONS can be launched -- there is deliberately no
+        fallback that searches PATH for an arbitrary name, since that would
+        let any chat input (including a prompt-injected one) launch any
+        executable on the machine with no approval step at all."""
         app_key = app_name.lower().strip()
-        
-        # Check if app is in safe list
-        app_path = SAFE_APPLICATIONS.get(app_key)
-        
+
         if app_key in ['command prompt', 'powershell']:
             return f"I can open {app_name}, but it requires approval for security reasons. Use /run for privileged commands.", False, True
-        
-        if app_path is None:
-            # Try to find in PATH
+
+        if app_key not in SAFE_APPLICATIONS:
+            return f"Sorry, I don't know how to open {app_name}. Try: notepad, calculator, browser, chrome, etc.", False, False
+
+        if app_key in NETWORK_APPS and not self.internet_allowed:
+            return f"Internet is disabled, so I can't open {app_name}. Run /enable_internet first (password required).", False, False
+
+        app_path = SAFE_APPLICATIONS[app_key]
+        if app_key == 'browser' and app_path is None:
             try:
-                subprocess.run(['where', f'{app_name}.exe'], capture_output=True, timeout=5)
-                app_path = f'{app_name}.exe'
-            except:
-                return f"Sorry, I don't know how to open {app_name}. Try: notepad, calculator, browser, chrome, etc.", False, False
-        
+                _open_url_incognito('about:blank')
+                return "Opening your default browser (incognito if available)...", True, False
+            except Exception as e:
+                return f"Could not open browser: {e}", False, False
+
         try:
             if app_path.startswith('ms-'):
                 # URI protocol
@@ -267,25 +376,71 @@ class TaskExecutor:
             return f"Could not open {app_name}: {e}", False, False
     
     def _search(self, query, provider='google'):
-        """Open a web search."""
+        """Open a web search (incognito by default)."""
+        if not self.internet_allowed:
+            return "Internet is disabled, so I can't search the web. Run /enable_internet first (password required).", False, False
+
         base_url = SEARCH_PROVIDERS.get(provider, SEARCH_PROVIDERS['google'])
         url = f"{base_url}{query.replace(' ', '+')}"
-        
+
         try:
-            webbrowser.open(url)
-            return f"Searching for '{query}' on {provider}...", True, False
+            _open_url_incognito(url)
+            return f"Searching for '{query}' on {provider} (incognito)...", True, False
         except Exception as e:
             return f"Could not perform search: {e}", False, False
-    
+
+    def _get_first_youtube_id(self, query):
+        """Try to resolve query to first YouTube videoId via search page scrape (no API key)."""
+        try:
+            import urllib.request
+            import urllib.parse
+            import re
+            search_url = f"https://www.youtube.com/results?search_query={urllib.parse.quote_plus(query)}"
+            headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36"}
+            req = urllib.request.Request(search_url, headers=headers)
+            with urllib.request.urlopen(req, timeout=8) as resp:
+                html = resp.read().decode("utf-8", errors="ignore")
+            # Primary: "videoId":"<11chars>"
+            ids = re.findall(r'"videoId"\s*:\s*"([a-zA-Z0-9_-]{11})"', html)
+            if not ids:
+                ids = re.findall(r'watch\?v=([a-zA-Z0-9_-]{11})', html)
+            if ids:
+                seen = set()
+                uniq = []
+                for vid in ids:
+                    if vid not in seen:
+                        seen.add(vid)
+                        uniq.append(vid)
+                return uniq[0]
+        except Exception:
+            pass
+        return None
+
     def _search_and_play(self, query, platform='youtube'):
-        """Search for media content and open it."""
+        """Search for media content and open it - now actually plays first result, not just search page."""
+        if not self.internet_allowed:
+            return "Internet is disabled, so I can't search online. Run /enable_internet first (password required).", False, False
+
         if platform == 'youtube':
-            url = f"https://www.youtube.com/results?search_query={query.replace(' ', '+')}"
+            # Clean query: remove stray "youtube" token added by parser (e.g. "kalyani youtube" -> "kalyani")
+            clean_q = query.strip()
+            if clean_q.lower().endswith(" youtube"):
+                clean_q = clean_q[: -len(" youtube")].strip()
+            if not clean_q:
+                clean_q = query
+            # Try to open direct watch page so song actually plays, not just search results
+            video_id = self._get_first_youtube_id(clean_q or query)
             try:
-                webbrowser.open(url)
-                return f"Searching for '{query}' on YouTube...", True, False
+                if video_id:
+                    watch_url = f"https://www.youtube.com/watch?v={video_id}&autoplay=1"
+                    _open_url_incognito(watch_url)
+                    return f"Playing '{clean_q}' on YouTube (incognito)...", True, False
+                # Fallback: open search page if scrape failed (YouTube blocked, no network, etc.)
+                url = f"https://www.youtube.com/results?search_query={clean_q.replace(' ', '+')}"
+                _open_url_incognito(url)
+                return f"Opened YouTube search for '{clean_q}' (incognito). Click the first result to play - autoplay was blocked.", True, False
             except Exception as e:
-                return f"Could not search: {e}", False, False
+                return f"Could not play: {e}", False, False
         else:
             return self._search(query, platform)
     
@@ -410,6 +565,53 @@ class TaskExecutor:
                 return f"Folder not found: {path}", False, False
         except Exception as e:
             return f"Could not open folder: {e}", False, False
+
+    def _bluetooth_status(self):
+        """Check Bluetooth radio / service status honestly."""
+        try:
+            # Check bthserv service
+            proc = subprocess.run(['powershell', '-Command', 'Get-Service -Name bthserv -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Status'], capture_output=True, text=True, timeout=5)
+            svc = proc.stdout.strip()
+            # Check PnP devices
+            proc2 = subprocess.run(['powershell', '-Command', 'Get-PnpDevice -Class Bluetooth -ErrorAction SilentlyContinue | Where-Object {$_.Status -eq "OK"} | Measure-Object | Select-Object -ExpandProperty Count'], capture_output=True, text=True, timeout=5)
+            count = proc2.stdout.strip()
+            if svc:
+                return f"Bluetooth service (bthserv) status: {svc}. Bluetooth devices OK: {count or 'unknown'}. Open ms-settings:bluetooth to toggle the radio.", True, False
+            return "Could not determine Bluetooth status.", False, False
+        except Exception as e:
+            return f"Could not check Bluetooth: {e}", False, False
+
+    def _bluetooth_control(self, turn_on: bool):
+        """Honestly control Bluetooth - service toggle != quick-settings radio. Never lies."""
+        action = "on" if turn_on else "off"
+        # NOTE: bthserv Running != radio ON in quick settings (as seen in your screenshot: service Running but toggle gray).
+        # RadioState requires WinRT UWP API which is blocked in this portable context, so we must be honest
+        # and delegate to Settings instead of claiming success.
+        try:
+            # Open Bluetooth settings so user can see/toggle the actual radio switch
+            try:
+                subprocess.Popen(['powershell', '-Command', 'Start-Process "ms-settings:bluetooth"'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            except Exception:
+                pass
+            # Also open quick settings via ms-actioncenter for visibility
+            # Try service attempt as best-effort but do NOT claim radio is on based on service alone
+            if turn_on:
+                ps = 'Set-Service -Name bthserv -StartupType Automatic -ErrorAction SilentlyContinue; Start-Service -Name bthserv -ErrorAction SilentlyContinue; Get-Service bthserv | Select-Object -ExpandProperty Status'
+            else:
+                ps = 'Stop-Service -Name bthserv -Force -ErrorAction SilentlyContinue; Set-Service -Name bthserv -StartupType Manual -ErrorAction SilentlyContinue; Get-Service bthserv | Select-Object -ExpandProperty Status'
+            proc = subprocess.run(['powershell', '-Command', ps], capture_output=True, text=True, timeout=6)
+            svc_status = proc.stdout.strip()
+            # Honest response: do not claim radio toggled, ask user to verify in Settings/quick settings
+            if turn_on:
+                return f"Opened Bluetooth settings (service status: {svc_status or 'unknown'}). The quick-settings Bluetooth toggle is independent from the service - please turn it ON there. Automatic radio toggle needs admin/WinRT and isn't reliable portably, so I won't falsely claim 'Bluetooth is turned on'.", False, False
+            else:
+                return f"Opened Bluetooth settings (service status: {svc_status or 'unknown'}). Please turn Bluetooth OFF in the toggle there. Automatic radio control isn't available without admin.", False, False
+        except Exception as e:
+            try:
+                subprocess.Popen(['powershell', '-Command', 'Start-Process "ms-settings:bluetooth"'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            except Exception:
+                pass
+            return f"Error controlling Bluetooth: {e}. Opened Bluetooth settings - please toggle manually.", False, False
     
     def get_available_tasks(self):
         """Get a list of available task types."""

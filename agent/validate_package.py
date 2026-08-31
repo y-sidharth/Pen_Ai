@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate that the portable Jarvis package is safely configured to launch."""
+"""Validate that the portable Jampandu package is safely configured to launch."""
 from __future__ import annotations
 
 import argparse
@@ -49,6 +49,25 @@ def main() -> int:
             message = f"Missing {label}: {candidate}"
             (errors if args.strict else warnings).append(message)
 
+    # Cloud / Gemini checklist validation (warnings only, not blocking offline use)
+    cloud_required = ["gemini_client.py", "vertex_config.py", "firestore_sync.py", "adk_agent/agent.py", "adk_agent/tools.py", "requirements.txt"]
+    for rel in cloud_required:
+        if not (BASE_DIR / rel).is_file():
+            warnings.append(f"Cloud integration file missing: {rel} (run setup_gcloud.bat)")
+    # Check Gemeni config
+    if "gemini_model" not in config:
+        warnings.append("config.json missing gemini_model (add gemini_model: gemini-2.5-pro)")
+    if "gcp_project" not in config:
+        warnings.append("config.json missing gcp_project (needed for Firestore/Vertex AI)")
+    # Check imports for checklist
+    if "gemini_client" not in source and "google.genai" not in (BASE_DIR / "gemini_client.py").read_text(encoding="utf-8") if (BASE_DIR / "gemini_client.py").exists() else True:
+        warnings.append("Gemini integration not wired - check gemini_client.py imports google.genai")
+    # Requirements checklist
+    req_text = (BASE_DIR / "requirements.txt").read_text(encoding="utf-8") if (BASE_DIR / "requirements.txt").exists() else ""
+    for dep in ["google-genai", "google-adk", "google-cloud-firestore", "google-cloud-storage"]:
+        if dep not in req_text:
+            warnings.append(f"requirements.txt missing {dep}")
+
     for message in warnings:
         print(f"WARNING: {message}")
     for message in errors:
@@ -56,6 +75,8 @@ def main() -> int:
     if errors:
         return 1
     print("Package validation passed.")
+    if warnings:
+        print(f"({len(warnings)} cloud warnings - ok for offline, fix for hackathon submission)")
     return 0
 
 

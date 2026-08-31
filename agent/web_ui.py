@@ -35,6 +35,24 @@ try:
     import host_cleaner  # noqa: E402  amnesiac host-trace erasure
 except Exception:
     host_cleaner = None
+# Cloud / Gemini hybrid (graceful if missing) - checklist
+try:
+    import gemini_client  # noqa: E402
+except Exception:
+    gemini_client = None
+try:
+    import firestore_sync  # noqa: E402
+except Exception:
+    firestore_sync = None
+try:
+    import vertex_config  # noqa: E402
+except Exception:
+    vertex_config = None
+try:
+    from adk_agent.agent import health as adk_health, run_adk_query  # noqa: E402
+except Exception:
+    adk_health = None
+    run_adk_query = None
 import signal as _signal  # noqa: E402
 
 CONFIG_PATH = BASE_DIR / "config.json"
@@ -242,770 +260,186 @@ HTML = r"""<!doctype html>
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
   <meta http-equiv="Pragma" content="no-cache">
-  <title>Jampandu — Fixed Layout v5</title>
+  <title>Jampandu - Local AI Assistant</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&amp;family=JetBrains+Mono:wght@400;500&amp;display=swap" rel="stylesheet">
   <style>
-    :root {
+:root {
       color-scheme: dark;
-      --bg-0: #0a0714;
-      --bg-1: #120a24;
-      --surface: rgba(255, 255, 255, 0.05);
-      --surface-strong: rgba(255, 255, 255, 0.08);
-      --surface-2: rgba(10, 6, 20, 0.35);
-      --line: rgba(255, 255, 255, 0.10);
-      --line-soft: rgba(255, 255, 255, 0.06);
-      --text: #f6f2ff;
-      --muted: #ac9fd6;
-      --violet: #a855f7;
+      --bg-0: #07050e;
+      --bg-1: #0d0a1a;
+      --surface: rgba(255, 255, 255, 0.04);
+      --surface-strong: rgba(255, 255, 255, 0.07);
+      --surface-2: rgba(10, 6, 20, 0.5);
+      --line: rgba(255, 255, 255, 0.08);
+      --line-soft: rgba(255, 255, 255, 0.04);
+      --text: #f0eaff;
+      --muted: #9b8ec4;
+      --violet: #8b5cf6;
       --pink: #ec4899;
       --cyan: #22d3ee;
       --lime: #a3e635;
       --amber: #fbbf24;
       --orange: #fb923c;
       --rose: #fb7185;
-      --ink: #170a2b;
       --grad-brand: linear-gradient(135deg, #8b5cf6 0%, #ec4899 55%, #fb923c 100%);
-      --grad-cyan: linear-gradient(135deg, #22d3ee, #6366f1);
       --grad-ok: linear-gradient(135deg, #34d399, #a3e635);
       --grad-warn: linear-gradient(135deg, #fbbf24, #fb923c);
       --grad-bad: linear-gradient(135deg, #fb7185, #ef4444);
-      font-family: "Segoe UI", system-ui, sans-serif;
+      --radius: 12px;
+      --radius-lg: 16px;
+      --shadow-glow: 0 8px 32px -8px rgba(139, 92, 246, 0.35);
+      font-family: "Inter", system-ui, -apple-system, sans-serif;
     }
-
-    * {
-      box-sizing: border-box;
-    }
-
-    html {
-      height: 100%;
-      overflow: hidden;
-    }
-
+    *, *::before, *::after { box-sizing: border-box; }
+    html { height: 100%; overflow: hidden; }
     body {
-      margin: 0;
-      height: 100%;
-      height: 100vh;
-      height: 100dvh;
-      overflow: hidden;
-      color: var(--text);
+      margin: 0; height: 100%; height: 100vh; height: 100dvh;
+      overflow: hidden; color: var(--text);
       background:
-        radial-gradient(1100px 760px at 8% -8%, rgba(168, 85, 247, 0.38), transparent 60%),
-        radial-gradient(950px 680px at 102% 4%, rgba(236, 72, 153, 0.30), transparent 55%),
-        radial-gradient(900px 820px at 46% 118%, rgba(34, 211, 238, 0.24), transparent 55%),
-        radial-gradient(700px 600px at 80% 60%, rgba(251, 146, 60, 0.14), transparent 60%),
+        radial-gradient(1200px 800px at 5% -5%, rgba(139,92,246,0.30), transparent 55%),
+        radial-gradient(1000px 700px at 105% 5%, rgba(236,72,153,0.22), transparent 50%),
+        radial-gradient(900px 800px at 45% 115%, rgba(34,211,238,0.18), transparent 50%),
+        radial-gradient(600px 500px at 85% 55%, rgba(251,146,60,0.10), transparent 55%),
         linear-gradient(180deg, var(--bg-0), var(--bg-1));
       background-attachment: fixed;
     }
-
-    button, textarea, input {
-      font: inherit;
-    }
-
-    ::selection {
-      background: rgba(168, 85, 247, 0.4);
-      color: #fff;
-    }
-
-    ::-webkit-scrollbar {
-      width: 10px;
-      height: 10px;
-    }
-
-    ::-webkit-scrollbar-track {
-      background: transparent;
-    }
-
-    ::-webkit-scrollbar-thumb {
-      background: linear-gradient(180deg, var(--violet), var(--pink));
-      border-radius: 999px;
-    }
-
-    /* CHATGPT-STYLE: fixed sidebar + flex main - sidebar NEVER moves with messages */
-    /* Fix: pin app to viewport with inset:0 so input bar is never hidden behind taskbar (see 2nd image) */
-    .app {
-      display: flex;
-      flex-direction: row;
-      height: 100vh;
-      height: 100dvh;
-      overflow: hidden;
-      align-items: stretch;
-      position: fixed;
-      inset: 0;
-      width: 100%;
-    }
-
-    aside {
-      width: 288px;
-      min-width: 288px;
-      max-width: 288px;
-      height: 100vh;
-      height: 100dvh;
-      overflow-y: auto;
-      overflow-x: hidden;
-      border-right: 1px solid var(--line);
-      background: var(--surface);
-      backdrop-filter: blur(22px);
-      -webkit-backdrop-filter: blur(22px);
-      padding: 22px;
-      flex-shrink: 0;
-      position: sticky;
-      top: 0;
-      align-self: flex-start;
-      display: flex;
-      flex-direction: column;
-      scrollbar-width: thin;
-      scrollbar-color: rgba(168,85,247,0.5) transparent;
-      overscroll-behavior: contain;
-      z-index: 5;
-    }
-
-    main {
-      flex: 1;
-      display: flex;
-      flex-direction: column;
-      min-width: 0;
-      height: 100%;
-      max-height: 100vh;
-      max-height: 100dvh;
-      overflow: hidden;
-      min-height: 0;
-    }
-
-    .brand {
-      display: flex;
-      align-items: center;
-      gap: 13px;
-      margin-bottom: 26px;
-    }
-
-    .brand-mark {
-      width: 46px;
-      height: 46px;
-      border-radius: 13px;
-      background: var(--grad-brand);
-      display: grid;
-      place-items: center;
-      box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.15) inset, 0 8px 22px -6px rgba(236, 72, 153, 0.65);
-      animation: glow-pulse 3.2s ease-in-out infinite;
-    }
-
-    @keyframes glow-pulse {
-      0%, 100% { box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.15) inset, 0 8px 22px -6px rgba(236, 72, 153, 0.65); }
-      50% { box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.22) inset, 0 10px 30px -4px rgba(168, 85, 247, 0.85); }
-    }
-
-    .brand h1 {
-      margin: 0;
-      font-size: 24px;
-      line-height: 1;
-      letter-spacing: 0;
-      background: var(--grad-brand);
-      -webkit-background-clip: text;
-      background-clip: text;
-      color: transparent;
-      font-weight: 800;
-    }
-
-    .brand p {
-      margin: 6px 0 0;
-      color: var(--muted);
-      font-size: 12.5px;
-      letter-spacing: 0.02em;
-    }
-
-    .section {
-      padding: 18px 0;
-      border-top: 1px solid var(--line-soft);
-    }
-
-    .section h2 {
-      margin: 0 0 14px;
-      font-size: 12px;
-      color: var(--muted);
-      text-transform: uppercase;
-      letter-spacing: 0.08em;
-      font-weight: 700;
-    }
-
-    .status-row {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      gap: 14px;
-      margin: 11px 0;
-      color: var(--muted);
-      font-size: 14px;
-    }
-
-    .pill {
-      min-width: 72px;
-      text-align: center;
-      border: 1px solid var(--line);
-      color: var(--text);
-      padding: 4px 10px;
-      border-radius: 999px;
-      font-size: 12px;
-      font-weight: 600;
-      background: rgba(255, 255, 255, 0.06);
-    }
-
-    .pill.ok {
-      border-color: transparent;
-      background: var(--grad-ok);
-      color: #062a17;
-      box-shadow: 0 4px 14px -4px rgba(163, 230, 53, 0.55);
-    }
-
-    .pill.warn {
-      border-color: transparent;
-      background: var(--grad-warn);
-      color: #3a1c02;
-      box-shadow: 0 4px 14px -4px rgba(251, 146, 60, 0.55);
-    }
-
-    .pill.bad {
-      border-color: transparent;
-      background: var(--grad-bad);
-      color: #370408;
-      box-shadow: 0 4px 14px -4px rgba(251, 113, 133, 0.55);
-    }
-
-    .actions {
-      display: grid;
-      gap: 10px;
-    }
-
-    .button {
-      min-height: 42px;
-      border: 1px solid var(--line);
-      background: var(--surface-strong);
-      color: var(--text);
-      border-radius: 10px;
-      cursor: pointer;
-      padding: 0 14px;
-      text-align: left;
-      font-weight: 600;
-      transition: transform 0.15s ease, border-color 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
-    }
-
-    .button:hover {
-      border-color: rgba(168, 85, 247, 0.55);
-      background: rgba(168, 85, 247, 0.14);
-      transform: translateY(-1px);
-      box-shadow: 0 6px 18px -8px rgba(168, 85, 247, 0.55);
-    }
-
-    .button:active {
-      transform: translateY(0);
-    }
-
-    .button.primary {
-      background: var(--grad-brand);
-      color: #fff;
-      border-color: transparent;
-      font-weight: 700;
-      text-align: center;
-      box-shadow: 0 8px 22px -6px rgba(236, 72, 153, 0.6);
-    }
-
-    .button.primary:hover {
-      transform: translateY(-1px) scale(1.02);
-      box-shadow: 0 10px 28px -6px rgba(236, 72, 153, 0.75);
-    }
-
-    .button:disabled {
-      cursor: not-allowed;
-      opacity: 0.5;
-      transform: none;
-      box-shadow: none;
-    }
-
-    .toggle {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 12px;
-      color: var(--muted);
-      font-size: 14px;
-    }
-
-    .toggle input {
-      width: 18px;
-      height: 18px;
-      accent-color: var(--pink);
-    }
-
-    .switch {
-      position: relative;
-      display: inline-block;
-      width: 44px;
-      height: 24px;
-      flex-shrink: 0;
-    }
-
-    .switch input {
-      opacity: 0;
-      width: 0;
-      height: 0;
-    }
-
-    .switch .slider {
-      position: absolute;
-      inset: 0;
-      cursor: pointer;
-      background: rgba(255, 255, 255, 0.12);
-      border: 1px solid var(--line);
-      border-radius: 999px;
-      transition: background 0.2s ease, border-color 0.2s ease;
-    }
-
-    .switch .slider::before {
-      content: "";
-      position: absolute;
-      width: 18px;
-      height: 18px;
-      left: 2px;
-      top: 2px;
-      border-radius: 50%;
-      background: #fff;
-      transition: transform 0.2s ease;
-      box-shadow: 0 2px 6px rgba(0, 0, 0, 0.35);
-    }
-
-    .switch input:checked + .slider {
-      background: var(--grad-ok);
-      border-color: transparent;
-    }
-
-    .switch input:checked + .slider::before {
-      transform: translateX(20px);
-    }
-
-    .switch input:disabled + .slider {
-      cursor: not-allowed;
-      opacity: 0.6;
-    }
-
-    header {
-      border-bottom: 1px solid var(--line);
-      padding: 18px 26px;
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      gap: 16px;
-      background: var(--surface-2);
-      backdrop-filter: blur(18px);
-      -webkit-backdrop-filter: blur(18px);
-      flex-shrink: 0;
-      z-index: 5;
-    }
-
-    .headline {
-      min-width: 0;
-    }
-
-    .headline h2 {
-      margin: 0;
-      font-size: 19px;
-      letter-spacing: 0;
-      background: linear-gradient(90deg, var(--cyan), var(--violet));
-      -webkit-background-clip: text;
-      background-clip: text;
-      color: transparent;
-      font-weight: 800;
-    }
-
-    .headline p {
-      margin: 4px 0 0;
-      color: var(--muted);
-      font-size: 13px;
-    }
-
-    #activity {
-      color: var(--cyan);
-      font-size: 14px;
-      white-space: nowrap;
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      font-weight: 600;
-    }
-
-    #activity::before {
-      content: "";
-      width: 9px;
-      height: 9px;
-      border-radius: 999px;
-      background: var(--grad-ok);
-      box-shadow: 0 0 10px 2px rgba(163, 230, 53, 0.7);
-      animation: pulse-dot 1.6s ease-in-out infinite;
-    }
-
-    @keyframes pulse-dot {
-      0%, 100% { opacity: 1; transform: scale(1); }
-      50% { opacity: 0.5; transform: scale(0.75); }
-    }
-
-    #chat {
-      flex: 1 1 0;
-      overflow-y: auto;
-      overflow-x: hidden;
-      padding: 24px 26px 24px;
-      min-height: 0;
-      scroll-behavior: smooth;
-      scrollbar-width: thin;
-      scrollbar-color: rgba(168,85,247,0.4) transparent;
-      scroll-padding-bottom: 0;
-      overscroll-behavior: contain;
-      -webkit-overflow-scrolling: touch;
-    }
-
-    .message {
-      max-width: 880px;
-      margin: 0 0 16px;
-      border-radius: 14px;
-      border: 1px solid var(--line);
-      padding: 12px 16px;
-      white-space: pre-wrap;
-      overflow-wrap: anywhere;
-      background: var(--surface);
-      backdrop-filter: blur(10px);
-      -webkit-backdrop-filter: blur(10px);
-      animation: message-in 0.28s ease both;
-    }
-
-    @keyframes message-in {
-      from { opacity: 0; transform: translateY(6px); }
-      to { opacity: 1; transform: translateY(0); }
-    }
-
-    .message .name {
-      font-size: 12.5px;
-      font-weight: 800;
-      margin-bottom: 6px;
-      text-transform: uppercase;
-      letter-spacing: 0.05em;
-    }
-
-    .message .text {
-      color: #ece6fb;
-      line-height: 1.6;
-      font-size: 15px;
-    }
-
-    .message.user {
-      border-color: rgba(34, 211, 238, 0.4);
-      background: linear-gradient(135deg, rgba(34, 211, 238, 0.12), rgba(99, 102, 241, 0.06));
-      margin-left: auto;
-    }
-
-    .message.assistant {
-      border-color: rgba(236, 72, 153, 0.4);
-      background: linear-gradient(135deg, rgba(168, 85, 247, 0.12), rgba(236, 72, 153, 0.07));
-    }
-
-    .message.system {
-      border-color: rgba(251, 191, 36, 0.4);
-      background: linear-gradient(135deg, rgba(251, 191, 36, 0.10), rgba(251, 146, 60, 0.05));
-      max-width: 100%;
-      font-size: 13.5px;
-    }
-
-    .message.user .name {
-      color: var(--cyan);
-    }
-
-    .message.assistant .name {
-      background: linear-gradient(90deg, var(--violet), var(--pink));
-      -webkit-background-clip: text;
-      background-clip: text;
-      color: transparent;
-    }
-
-    .message.system .name {
-      color: var(--amber);
-    }
-
-    /* Search bar ALWAYS visible at bottom - flex pinned like 2nd image, never hidden */
-    form {
-      border-top: 1px solid var(--line);
-      padding: 16px 26px calc(16px + env(safe-area-inset-bottom));
-      background: rgba(18, 10, 36, 0.96);
-      backdrop-filter: blur(18px);
-      -webkit-backdrop-filter: blur(18px);
-      display: grid;
-      grid-template-columns: minmax(0, 1fr) 112px;
-      gap: 12px;
-      align-items: end;
-      flex: 0 0 auto;
-      flex-shrink: 0;
-      z-index: 10;
-      position: relative;
-      width: 100%;
-      box-sizing: border-box;
-    }
-
-    textarea {
-      width: 100%;
-      min-height: 74px;
-      max-height: 170px;
-      resize: vertical;
-      border: 1px solid var(--line);
-      background: rgba(255, 255, 255, 0.04);
-      color: var(--text);
-      border-radius: 12px;
-      padding: 12px 14px;
-      outline: none;
-      transition: border-color 0.15s ease, box-shadow 0.15s ease;
-    }
-
-    textarea::placeholder {
-      color: var(--muted);
-    }
-
-    textarea:focus {
-      border-color: rgba(168, 85, 247, 0.65);
-      box-shadow: 0 0 0 3px rgba(168, 85, 247, 0.22), 0 0 24px -6px rgba(236, 72, 153, 0.4);
-    }
-
-    /* Markdown rendering inside assistant messages */
-    .message .text strong { font-weight: 800; color: #fff; }
-    .message .text em { font-style: italic; color: #f6f2ff; }
-    .message .text code {
-      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-      background: rgba(255,255,255,0.08);
-      border: 1px solid rgba(255,255,255,0.08);
-      padding: 1px 6px;
-      border-radius: 6px;
-      font-size: 13.5px;
-    }
-    .message .text pre {
-      background: rgba(0,0,0,0.28);
-      border: 1px solid rgba(255,255,255,0.08);
-      padding: 12px 14px;
-      border-radius: 10px;
-      overflow: auto;
-      margin: 8px 0;
-      white-space: pre;
-    }
-    .message .text pre code { background: none; border: none; padding: 0; }
-    .message .text ul { margin: 8px 0; padding-left: 20px; }
-    .message .text li { margin: 4px 0; }
-
-    /* Typing indicator */
-    .typing {
-      display: inline-flex;
-      align-items: center;
-      gap: 4px;
-      padding: 6px 0 2px;
-    }
-    .typing span {
-      width: 7px;
-      height: 7px;
-      border-radius: 50%;
-      background: var(--pink);
-      opacity: 0.35;
-      animation: typing-dot 1.1s infinite ease-in-out;
-    }
-    .typing span:nth-child(2) { animation-delay: 0.2s; }
-    .typing span:nth-child(3) { animation-delay: 0.4s; }
-    @keyframes typing-dot {
-      0%, 80%, 100% { transform: scale(0.65); opacity: 0.35; }
-      40% { transform: scale(1); opacity: 1; }
-    }
-
-    /* Header actions (Clear Chat) */
-    .header-actions {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-    }
-    .button.ghost {
-      background: rgba(255,255,255,0.06);
-      border-color: var(--line);
-      color: var(--muted);
-      font-size: 13px;
-      min-height: 34px;
-      padding: 0 12px;
-      text-align: center;
-    }
-    .button.ghost:hover { color: var(--text); border-color: rgba(251,113,133,0.45); background: rgba(251,113,133,0.10); }
-
-    /* Always allow down-scroll — auto-pinned to bottom */
-    #chat { scroll-behavior: smooth; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
-    #chat { overflow-anchor: auto; }
-
-    /* Startup verification overlay - shows ONLY on website start */
-    #startup-overlay {
-      position: fixed;
-      inset: 0;
-      z-index: 9999;
-      display: none;
-      align-items: center;
-      justify-content: center;
-      background: rgba(10, 7, 20, 0.88);
-      backdrop-filter: blur(14px);
-      -webkit-backdrop-filter: blur(14px);
-      padding: 20px;
-    }
-    #startup-overlay.active {
-      display: flex;
-    }
-    .startup-card {
-      width: 100%;
-      max-width: 420px;
-      background: linear-gradient(135deg, rgba(18, 10, 36, 0.96), rgba(28, 12, 54, 0.96));
-      border: 1px solid rgba(168, 85, 247, 0.35);
-      border-radius: 18px;
-      padding: 28px;
-      box-shadow: 0 20px 50px -10px rgba(0, 0, 0, 0.7), 0 0 0 1px rgba(255,255,255,0.06) inset;
-      animation: message-in 0.32s ease both;
-    }
-    .startup-card h2 {
-      margin: 0 0 6px;
-      font-size: 20px;
-      background: var(--grad-brand);
-      -webkit-background-clip: text;
-      background-clip: text;
-      color: transparent;
-      font-weight: 800;
-    }
-    .startup-card p {
-      margin: 0 0 18px;
-      color: var(--muted);
-      font-size: 13.5px;
-      line-height: 1.5;
-    }
-    .startup-card input {
-      width: 100%;
-      min-height: 44px;
-      border: 1px solid var(--line);
-      background: rgba(255,255,255,0.06);
-      color: var(--text);
-      border-radius: 10px;
-      padding: 10px 14px;
-      outline: none;
-      margin-bottom: 12px;
-    }
-    .startup-card input:focus {
-      border-color: rgba(168, 85, 247, 0.65);
-      box-shadow: 0 0 0 3px rgba(168,85,247,0.2);
-    }
-    .startup-error {
-      min-height: 18px;
-      color: #fb7185;
-      font-size: 13px;
-      margin: 4px 0 8px;
-    }
-    .startup-card .button {
-      width: 100%;
-      text-align: center;
-      justify-content: center;
-    }
-
-    /* ChatGPT-style: hamburger + drawer */
-    #menu-toggle {
-      display: none;
-      width: 40px;
-      height: 40px;
-      border-radius: 8px;
-      border: 1px solid var(--line);
-      background: var(--surface-strong);
-      color: var(--text);
-      font-size: 20px;
-      line-height: 1;
-      cursor: pointer;
-      place-items: center;
-      flex-shrink: 0;
-    }
-    #menu-toggle:hover { border-color: rgba(168,85,247,0.6); background: rgba(168,85,247,0.15); }
-
-    #sidebar-overlay {
-      display: none;
-      position: fixed;
-      inset: 0;
-      background: rgba(0,0,0,0.45);
-      backdrop-filter: blur(2px);
-      z-index: 40;
-    }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+    }
+    button, textarea, input { font: inherit; }
+    ::selection { background: rgba(139,92,246,0.4); color: #fff; }
+    ::-webkit-scrollbar { width: 8px; height: 8px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: linear-gradient(180deg, var(--violet), var(--pink)); border-radius: 999px; }
+    ::-webkit-scrollbar-thumb:hover { background: linear-gradient(180deg, #a78bfa, #f472b6); }
+    .app { display: flex; flex-direction: row; height: 100vh; height: 100dvh; overflow: hidden; align-items: stretch; position: fixed; inset: 0; width: 100%; }
+    aside { width: 300px; min-width: 300px; max-width: 300px; height: 100vh; height: 100dvh; overflow-y: auto; overflow-x: hidden; border-right: 1px solid var(--line); background: var(--surface); backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px); padding: 24px; flex-shrink: 0; position: sticky; top: 0; align-self: flex-start; display: flex; flex-direction: column; scrollbar-width: thin; scrollbar-color: rgba(139,92,246,0.5) transparent; overscroll-behavior: contain; z-index: 5; }
+    main { flex: 1; display: flex; flex-direction: column; min-width: 0; height: 100%; max-height: 100vh; max-height: 100dvh; overflow: hidden; min-height: 0; }
+    .brand { display: flex; align-items: center; gap: 14px; margin-bottom: 28px; }
+    .brand-mark { width: 48px; height: 48px; border-radius: var(--radius); background: var(--grad-brand); display: grid; place-items: center; box-shadow: 0 0 0 1px rgba(255,255,255,0.12) inset, var(--shadow-glow); position: relative; overflow: hidden; }
+    .brand-mark::after { content: ""; position: absolute; inset: 0; background: linear-gradient(135deg, rgba(255,255,255,0.2) 0%, transparent 50%); border-radius: inherit; }
+    .brand-mark svg { position: relative; z-index: 1; }
+    .brand h1 { margin: 0; font-size: 26px; line-height: 1; letter-spacing: -0.02em; background: var(--grad-brand); -webkit-background-clip: text; background-clip: text; color: transparent; font-weight: 800; }
+    .brand .tagline { margin: 4px 0 0; color: var(--muted); font-size: 11.5px; letter-spacing: 0.02em; font-weight: 400; }
+    .sidebar-search { position: relative; margin-bottom: 4px; }
+    .sidebar-search input { width: 100%; min-height: 38px; border: 1px solid var(--line); background: rgba(255,255,255,0.04); color: var(--text); border-radius: 10px; padding: 8px 12px 8px 34px; outline: none; font-size: 13px; transition: border-color 0.15s ease, box-shadow 0.15s ease; }
+    .sidebar-search input::placeholder { color: var(--muted); }
+    .sidebar-search input:focus { border-color: rgba(139,92,246,0.6); box-shadow: 0 0 0 3px rgba(139,92,246,0.15); }
+    .sidebar-search .search-icon { position: absolute; left: 10px; top: 50%; transform: translateY(-50%); color: var(--muted); font-size: 13px; pointer-events: none; }
+    .section { padding: 16px 0; border-top: 1px solid var(--line-soft); }
+    .section h2 { margin: 0 0 14px; font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.1em; font-weight: 700; }
+    .status-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin: 10px 0; color: var(--muted); font-size: 13.5px; }
+    .pill { min-width: 64px; text-align: center; border: 1px solid var(--line); color: var(--text); padding: 4px 10px; border-radius: 999px; font-size: 11.5px; font-weight: 600; background: rgba(255,255,255,0.05); display: inline-flex; align-items: center; gap: 6px; }
+    .pill .dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+    .pill.ok { border-color: transparent; background: var(--grad-ok); color: #062a17; box-shadow: 0 4px 14px -4px rgba(163,230,53,0.5); }
+    .pill.ok .dot { background: #062a17; }
+    .pill.warn { border-color: transparent; background: var(--grad-warn); color: #3a1c02; box-shadow: 0 4px 14px -4px rgba(251,146,60,0.5); }
+    .pill.warn .dot { background: #3a1c02; }
+    .pill.bad { border-color: transparent; background: var(--grad-bad); color: #370408; box-shadow: 0 4px 14px -4px rgba(251,113,133,0.5); }
+    .pill.bad .dot { background: #370408; }
+    .pill.clickable { cursor: pointer; }
+    .pill.clickable:hover { filter: brightness(1.08); }
+    .cloud-setup label { display: block; font-size: 11px; color: var(--muted); margin: 10px 0 4px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; }
+    .cloud-setup input, .cloud-setup select { width: 100%; min-height: 34px; border: 1px solid var(--line); background: rgba(255,255,255,0.04); color: var(--text); border-radius: 8px; padding: 6px 10px; font-size: 12.5px; outline: none; }
+    .cloud-setup input:focus, .cloud-setup select:focus { border-color: rgba(139,92,246,0.6); box-shadow: 0 0 0 3px rgba(139,92,246,0.15); }
+    .cloud-setup .hint { font-size: 11.5px; color: var(--muted); margin: 0 0 8px; line-height: 1.45; }
+    .cloud-setup select option { background: #120c1c; color: var(--text); }
+    .actions { display: grid; gap: 8px; }
+    .button { min-height: 40px; border: 1px solid var(--line); background: var(--surface-strong); color: var(--text); border-radius: 10px; cursor: pointer; padding: 0 14px; text-align: left; font-weight: 600; font-size: 13px; transition: transform 0.15s ease, border-color 0.15s ease, background 0.15s ease, box-shadow 0.15s ease; display: flex; align-items: center; gap: 8px; }
+    .button:hover { border-color: rgba(139,92,246,0.5); background: rgba(139,92,246,0.12); transform: translateY(-1px); box-shadow: 0 6px 20px -8px rgba(139,92,246,0.45); }
+    .button:active { transform: translateY(0); }
+    .button.primary { background: var(--grad-brand); color: #fff; border-color: transparent; font-weight: 700; text-align: center; justify-content: center; box-shadow: 0 8px 24px -6px rgba(236,72,153,0.55); }
+    .button.primary:hover { transform: translateY(-1px) scale(1.02); box-shadow: 0 12px 32px -6px rgba(236,72,153,0.7); }
+    .button:disabled { cursor: not-allowed; opacity: 0.5; transform: none; box-shadow: none; }
+    .button.ghost { background: rgba(255,255,255,0.05); border-color: var(--line); color: var(--muted); font-size: 12.5px; min-height: 34px; padding: 0 12px; text-align: center; justify-content: center; }
+    .button.ghost:hover { color: var(--text); border-color: rgba(251,113,133,0.4); background: rgba(251,113,133,0.08); }
+    .button .btn-icon { font-size: 15px; line-height: 1; }
+    .toggle { display: flex; align-items: center; justify-content: space-between; gap: 10px; color: var(--muted); font-size: 13.5px; }
+    .switch { position: relative; display: inline-block; width: 42px; height: 22px; flex-shrink: 0; }
+    .switch input { opacity: 0; width: 0; height: 0; }
+    .switch .slider { position: absolute; inset: 0; cursor: pointer; background: rgba(255,255,255,0.1); border: 1px solid var(--line); border-radius: 999px; transition: background 0.2s ease, border-color 0.2s ease; }
+    .switch .slider::before { content: ""; position: absolute; width: 16px; height: 16px; left: 2px; top: 2px; border-radius: 50%; background: #fff; transition: transform 0.2s cubic-bezier(0.4,0,0.2,1); box-shadow: 0 2px 6px rgba(0,0,0,0.35); }
+    .switch input:checked + .slider { background: var(--grad-ok); border-color: transparent; }
+    .switch input:checked + .slider::before { transform: translateX(20px); }
+    .switch input:disabled + .slider { cursor: not-allowed; opacity: 0.5; }
+    header { border-bottom: 1px solid var(--line); padding: 16px 28px; display: flex; justify-content: space-between; align-items: center; gap: 16px; background: var(--surface-2); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); flex-shrink: 0; z-index: 5; }
+    .headline { min-width: 0; }
+    .headline h2 { margin: 0; font-size: 18px; letter-spacing: -0.01em; background: linear-gradient(90deg, var(--cyan), var(--violet)); -webkit-background-clip: text; background-clip: text; color: transparent; font-weight: 700; }
+    .headline p { margin: 3px 0 0; color: var(--muted); font-size: 12.5px; }
+    #activity { color: var(--cyan); font-size: 13px; white-space: nowrap; display: flex; align-items: center; gap: 8px; font-weight: 500; }
+    #activity::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--grad-ok); box-shadow: 0 0 8px 2px rgba(163,230,53,0.6); animation: pulse-dot 1.6s ease-in-out infinite; }
+    @keyframes pulse-dot { 0%,100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.5; transform: scale(0.75); } }
+    #chat { flex: 1 1 0; overflow-y: auto; overflow-x: hidden; padding: 28px 32px 28px; min-height: 0; scroll-behavior: smooth; scrollbar-width: thin; scrollbar-color: rgba(139,92,246,0.4) transparent; scroll-padding-bottom: 0; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
+    .empty-state { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; text-align: center; padding: 40px; opacity: 0.6; }
+    .empty-state .empty-icon { font-size: 48px; margin-bottom: 16px; opacity: 0.5; }
+    .empty-state h3 { margin: 0 0 8px; font-size: 18px; color: var(--text); font-weight: 700; }
+    .empty-state p { margin: 0; font-size: 14px; color: var(--muted); }
+    .message { max-width: 840px; margin: 0 0 14px; border-radius: var(--radius-lg); border: 1px solid var(--line); padding: 14px 18px; white-space: pre-wrap; overflow-wrap: anywhere; background: var(--surface); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); animation: msg-in 0.3s ease-out both; position: relative; }
+    @keyframes msg-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+    .message .msg-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+    .message .name { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; }
+    .message .timestamp { font-size: 11px; color: var(--muted); opacity: 0; transition: opacity 0.15s ease; }
+    .message:hover .timestamp { opacity: 1; }
+    .message .text { color: #ece6fb; line-height: 1.65; font-size: 14.5px; }
+    .message.user { border-color: rgba(34,211,238,0.3); background: linear-gradient(135deg, rgba(34,211,238,0.10), rgba(99,102,241,0.05)); margin-left: auto; }
+    .message.user .name { color: var(--cyan); }
+    .message.assistant { border-color: rgba(236,72,153,0.3); background: linear-gradient(135deg, rgba(139,92,246,0.10), rgba(236,72,153,0.06)); }
+    .message.assistant .name { background: linear-gradient(90deg, var(--violet), var(--pink)); -webkit-background-clip: text; background-clip: text; color: transparent; }
+    .message.system { border-color: rgba(251,191,36,0.3); background: linear-gradient(135deg, rgba(251,191,36,0.08), rgba(251,146,60,0.04)); max-width: 100%; font-size: 13px; }
+    .message.system .name { color: var(--amber); }
+    .message .copy-btn { position: absolute; top: 8px; right: 8px; width: 28px; height: 28px; border-radius: 6px; border: 1px solid var(--line); background: rgba(255,255,255,0.05); color: var(--muted); cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 12px; opacity: 0; transition: opacity 0.15s ease, background 0.15s ease, color 0.15s ease; }
+    .message:hover .copy-btn { opacity: 1; }
+    .message .copy-btn:hover { background: rgba(255,255,255,0.1); color: var(--text); }
+    .message .copy-btn.copied { color: var(--lime); border-color: rgba(163,230,53,0.3); }
+    .typing { display: inline-flex; align-items: center; gap: 5px; padding: 4px 0; }
+    .typing span { width: 7px; height: 7px; border-radius: 50%; background: var(--pink); opacity: 0.7; animation: bounce 1.1s infinite ease-in-out; }
+    .typing span:nth-child(2) { animation-delay: 0.15s; }
+    .typing span:nth-child(3) { animation-delay: 0.3s; }
+    @keyframes bounce { 0%,80%,100% { transform: scale(0.6); opacity: 0.3; } 40% { transform: scale(1); opacity: 1; } }
+    form { border-top: 1px solid var(--line); padding: 16px 32px calc(16px + env(safe-area-inset-bottom)); background: rgba(13,10,26,0.96); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); display: grid; grid-template-columns: minmax(0,1fr) 112px; gap: 12px; align-items: end; flex: 0 0 auto; flex-shrink: 0; z-index: 10; position: relative; width: 100%; box-sizing: border-box; }
+    textarea { width: 100%; min-height: 72px; max-height: 170px; resize: vertical; border: 1px solid var(--line); background: rgba(255,255,255,0.04); color: var(--text); border-radius: var(--radius); padding: 12px 16px; outline: none; transition: border-color 0.15s ease, box-shadow 0.15s ease; font-family: inherit; font-size: 14.5px; line-height: 1.5; }
+    textarea::placeholder { color: var(--muted); }
+    textarea:focus { border-color: rgba(139,92,246,0.6); box-shadow: 0 0 0 3px rgba(139,92,246,0.18), 0 0 24px -6px rgba(236,72,153,0.35); }
+    .shortcut-hint { text-align: center; font-size: 10px; color: var(--muted); opacity: 0.6; margin-top: 4px; }
+    #send { min-height: 72px; border: none; background: var(--grad-brand); color: #fff; border-radius: var(--radius); cursor: pointer; font-weight: 700; font-size: 14px; display: flex; align-items: center; justify-content: center; gap: 6px; transition: transform 0.15s ease, box-shadow 0.15s ease; box-shadow: 0 8px 24px -6px rgba(236,72,153,0.5); }
+    #send:hover { transform: translateY(-1px); box-shadow: 0 12px 32px -6px rgba(236,72,153,0.65); }
+    #send:active { transform: translateY(0); }
+    #send:disabled { cursor: not-allowed; opacity: 0.5; transform: none; }
+    #send .send-icon { font-size: 16px; }
+    .app-footer { padding: 8px 28px; font-size: 11px; color: var(--muted); opacity: 0.5; display: flex; justify-content: space-between; flex-shrink: 0; }
+    #startup-overlay { position: fixed; inset: 0; z-index: 9999; display: none; align-items: center; justify-content: center; background: rgba(7,5,14,0.92); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); padding: 20px; animation: fade-in 0.3s ease; }
+    #startup-overlay.active { display: flex; }
+    @keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
+    .startup-card { width: 100%; max-width: 420px; background: linear-gradient(135deg, rgba(13,10,26,0.96), rgba(28,12,54,0.96)); border: 1px solid rgba(139,92,246,0.35); border-radius: var(--radius-lg); padding: 32px; box-shadow: 0 24px 60px -12px rgba(0,0,0,0.7), 0 0 0 1px rgba(255,255,255,0.05) inset; animation: msg-in 0.3s ease-out both; }
+    .startup-card h2 { margin: 0 0 6px; font-size: 20px; background: var(--grad-brand); -webkit-background-clip: text; background-clip: text; color: transparent; font-weight: 800; }
+    .startup-card p { margin: 0 0 20px; color: var(--muted); font-size: 13.5px; line-height: 1.5; }
+    .startup-card input { width: 100%; min-height: 46px; border: 1px solid var(--line); background: rgba(255,255,255,0.05); color: var(--text); border-radius: 10px; padding: 10px 16px; outline: none; margin-bottom: 12px; font-size: 14px; transition: border-color 0.15s ease, box-shadow 0.15s ease; }
+    .startup-card input:focus { border-color: rgba(139,92,246,0.6); box-shadow: 0 0 0 3px rgba(139,92,246,0.18); }
+    .startup-error { min-height: 18px; color: var(--rose); font-size: 13px; margin: 4px 0 8px; }
+    .startup-card .button { width: 100%; text-align: center; justify-content: center; }
+    #menu-toggle { display: none; width: 40px; height: 40px; border-radius: 8px; border: 1px solid var(--line); background: var(--surface-strong); color: var(--text); font-size: 18px; line-height: 1; cursor: pointer; place-items: center; flex-shrink: 0; transition: border-color 0.15s ease, background 0.15s ease; }
+    #menu-toggle:hover { border-color: rgba(139,92,246,0.5); background: rgba(139,92,246,0.12); }
+    #sidebar-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.5); backdrop-filter: blur(2px); z-index: 40; }
     #sidebar-overlay.active { display: block; }
-
-    /* Desktop: sidebar is truly pinned — chat scroll never moves it */
-    @media (min-width: 821px) {
-      aside {
-        position: fixed;
-        left: 0;
-        top: 0;
-        bottom: 0;
-        height: 100vh;
-        height: 100dvh;
-        overscroll-behavior: contain;
-      }
-      main {
-        margin-left: 288px;
-        width: calc(100% - 288px);
-        height: 100vh;
-        height: 100dvh;
-      }
-    }
-
-    @media (max-width: 820px) {
-      .app {
-        flex-direction: column;
-        height: 100vh;
-        height: 100dvh;
-        position: fixed;
-        inset: 0;
-      }
-
-      aside {
-        position: fixed;
-        top: 0;
-        left: 0;
-        width: 288px;
-        max-width: 82vw;
-        height: 100%;
-        max-height: 100dvh;
-        z-index: 50;
-        border-right: 1px solid var(--line);
-        border-bottom: none;
-        transform: translateX(-100%);
-        transition: transform 0.28s cubic-bezier(0.4, 0, 0.2, 1);
-        box-shadow: 8px 0 32px rgba(0,0,0,0.5);
-      }
-      aside.open {
-        transform: translateX(0);
-      }
-
-      #menu-toggle {
-        display: grid;
-      }
-
-      main {
-        height: 100%;
-        max-height: 100dvh;
-        min-height: 0;
-      }
-
-      form {
-        grid-template-columns: minmax(0, 1fr) 88px;
-        padding: 12px 14px calc(12px + env(safe-area-inset-bottom));
-      }
-
-      #chat { padding: 16px 14px 24px; }
-
-      #activity {
-        white-space: normal;
-        font-size: 13px;
-      }
-      header { padding: 12px 14px; }
-    }
+    @media (min-width: 821px) { aside { position: fixed; left: 0; top: 0; bottom: 0; height: 100vh; height: 100dvh; overscroll-behavior: contain; } main { margin-left: 300px; width: calc(100% - 300px); height: 100vh; height: 100dvh; } }
+    @media (max-width: 820px) { .app { flex-direction: column; height: 100vh; height: 100dvh; position: fixed; inset: 0; } aside { position: fixed; top: 0; left: 0; width: 288px; max-width: 82vw; height: 100%; max-height: 100dvh; z-index: 50; border-right: 1px solid var(--line); border-bottom: none; transform: translateX(-100%); transition: transform 0.28s cubic-bezier(0.4,0,0.2,1); box-shadow: 8px 0 32px rgba(0,0,0,0.5); } aside.open { transform: translateX(0); } #menu-toggle { display: grid; } main { height: 100%; max-height: 100dvh; min-height: 0; } form { grid-template-columns: minmax(0,1fr) 88px; padding: 12px 14px calc(12px + env(safe-area-inset-bottom)); } #chat { padding: 16px 14px 24px; } #activity { white-space: normal; font-size: 12.5px; } header { padding: 12px 14px; } .brand { margin-bottom: 20px; } }
+    :focus-visible { outline: 2px solid var(--violet); outline-offset: 2px; }
+    button:focus-visible, textarea:focus-visible, input:focus-visible { outline: 2px solid var(--violet); outline-offset: 2px; }
+    .hist-item { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 8px; cursor: pointer; transition: background 0.12s ease; }
+    .hist-item:hover { background: rgba(255,255,255,0.06); }
+    .hist-item .hist-preview { flex: 1; min-width: 0; }
+    .hist-item .hist-text { font-size: 12.5px; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .hist-item .hist-meta { font-size: 11px; color: var(--muted); display: flex; align-items: center; gap: 4px; }
+    #history-section { transition: opacity 0.2s ease; }
+    #history-section.hidden { display: none; }
   </style>
 </head>
 <body>
-  <!-- Startup Verification Overlay: appears ONLY on website start, not on every internet toggle -->
   <div id="startup-overlay" aria-hidden="true">
     <div class="startup-card">
-      <h2>🔒 Verify Access</h2>
+      <h2>Verify Access</h2>
       <p id="startup-msg">Enter your agent password to continue. This appears only when the website starts.</p>
       <input id="startup-password" type="password" placeholder="Enter password" autocomplete="current-password">
       <div id="startup-error" class="startup-error"></div>
@@ -1019,6 +453,7 @@ HTML = r"""<!doctype html>
       <div class="brand">
         <div class="brand-mark" aria-hidden="true">
           <svg width="26" height="26" viewBox="0 0 28 28" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <rect x="2" y="2" width="24" height="24" rx="6" stroke="rgba(255,255,255,0.9)" stroke-width="1.5"/>
             <path d="M19.6 3.8l4.6 4.6-11.9 11.9-5.8 1.2 1.2-5.8L19.6 3.8z" stroke="#fff" stroke-width="1.9" stroke-linejoin="round"/>
             <path d="M16.8 6.6l4.6 4.6" stroke="#fff" stroke-width="1.9" stroke-opacity="0.85"/>
             <path d="M8.5 19.5l-3.2 3.2" stroke="#fff" stroke-width="1.9" stroke-linecap="round" stroke-opacity="0.85"/>
@@ -1026,19 +461,24 @@ HTML = r"""<!doctype html>
         </div>
         <div>
           <h1>Jampandu</h1>
-          <p>⚡ Local &middot; Private &middot; Yours</p>
+          <p class="tagline">Local · Private · Yours</p>
         </div>
       </div>
-
       <div class="section">
         <h2>Status</h2>
         <div class="status-row"><span>Config</span><span id="config" class="pill">-</span></div>
         <div class="status-row"><span>Model</span><span id="model" class="pill">-</span></div>
+        <div class="status-row">
+          <span>Active</span>
+          <select id="model-select" style="min-width:160px; max-width:200px; height:28px; border:1px solid var(--line); background:rgba(255,255,255,0.05); color:var(--text); border-radius:6px; font-size:11px; padding:0 6px; outline:none;">
+            <option value="">Loading...</option>
+          </select>
+        </div>
         <div class="status-row"><span>Runtime</span><span id="runtime" class="pill">-</span></div>
-        <div class="status-row"><span>Model server</span><span id="server" class="pill" title="Model is loading...">-</span></div>
+        <div class="status-row"><span>Server</span><span id="server" class="pill">-</span></div>
         <div id="warm-progress" style="display:none; margin:8px 0 4px; font-size:12px;">
-          <div style="display:flex; justify-content:space-between; color:var(--muted); margin-bottom:4px;"><span id="warm-pct">0%</span><span id="warm-time">0s • ETA --</span></div>
-          <div style="height:8px; background:rgba(255,255,255,0.08); border-radius:999px; overflow:hidden; border:1px solid var(--line);"><div id="warm-bar" style="height:100%; width:0%; background:var(--grad-brand); transition:width 0.4s ease;"></div></div>
+          <div style="display:flex; justify-content:space-between; color:var(--muted); margin-bottom:6px;"><span id="warm-pct">0%</span><span id="warm-time">0s · ETA --</span></div>
+          <div style="height:6px; background:rgba(255,255,255,0.08); border-radius:999px; overflow:hidden; border:1px solid var(--line);"><div id="warm-bar" style="height:100%; width:0%; background:var(--grad-brand); transition:width 0.4s ease; border-radius:999px;"></div></div>
           <div id="warm-log" style="margin-top:6px; color:var(--muted); font-size:11px; line-height:1.35; white-space:pre-wrap; max-height:62px; overflow:auto; opacity:0.9;"></div>
         </div>
         <div class="status-row"><span>Internet</span>
@@ -1053,183 +493,257 @@ HTML = r"""<!doctype html>
             <span class="slider"></span>
           </label>
         </div>
-        <div class="status-row"><span>Voice</span><span id="voice" class="pill" title="Voice input - click to speak (when enabled)">-</span></div>
+        <div class="status-row"><span>Voice</span><span id="voice" class="pill">-</span></div>
+        <div class="status-row"><span>Gemini</span><span id="gemini" class="pill clickable" title="Click to set up Gemini">-</span></div>
+        <div class="status-row"><span>Cloud</span><span id="cloud" class="pill clickable" title="Click to set up GCP / Firestore">-</span></div>
+        <div class="status-row"><span>ADK</span><span id="adk" class="pill clickable" title="Click to set up Google ADK">-</span></div>
       </div>
-
-       <div class="section">
-         <div class="status-row"><span>Local memory</span>
-           <label class="switch" title="Use local documents to answer">
-             <input id="rag" type="checkbox">
-             <span class="slider"></span>
-           </label>
-         </div>
-       </div>
-
-       <div class="section" id="history-section">
-         <h2>History</h2>
-         <div class="status-row">
-           <span>Entries</span>
-           <span id="history-count" class="pill">0</span>
-         </div>
-         <div id="history-list" style="max-height:260px; overflow-y:auto; font-size:12px;"></div>
-         <div style="margin-top:10px; display:flex; gap:8px; flex-wrap:wrap;">
-           <button id="history-refresh" class="button ghost" type="button" style="font-size:12px;">🔄 Refresh</button>
-           <button id="history-toggle" class="button ghost" type="button" style="font-size:12px;">☰ Toggle</button>
-         </div>
-       </div>
-
-       <div class="section actions">
-         <button id="warm" class="button" type="button">🔥 Warm Model</button>
-         <button id="refresh" class="button" type="button">🔄 Refresh</button>
-         <button id="validate" class="button" type="button">✅ Validate</button>
-         <button id="validate-strict" class="button" type="button">🔍 Validate (strict)</button>
-         <button id="cli" class="button" type="button">🖥️ Open CLI</button>
-         <button id="sign-off" class="button" type="button" style="background:var(--grad-bad); color:#fff; border-color:transparent;">🧹 Sign Off</button>
-       </div>
-     </aside>
-
+      <div class="section cloud-setup" id="cloud-setup-section">
+        <h2>Cloud setup</h2>
+        <p class="hint">Gemini uses an AI Studio key. Cloud/Firestore need a GCP project. ADK is Google's agent framework — install SDKs if the pill says Missing.</p>
+        <label for="cloud-gemini-key">Gemini API key</label>
+        <input id="cloud-gemini-key" type="password" autocomplete="off" placeholder="AIza… from aistudio.google.com/apikey">
+        <div id="cloud-key-hint" class="hint"></div>
+        <label for="cloud-gcp-project">GCP project</label>
+        <input id="cloud-gcp-project" type="text" autocomplete="off" placeholder="my-gcp-project">
+        <label for="cloud-gcs-bucket">GCS bucket (optional)</label>
+        <input id="cloud-gcs-bucket" type="text" autocomplete="off" placeholder="pen-ai-brain">
+        <label for="cloud-gemini-model">Model</label>
+        <select id="cloud-gemini-model">
+          <option value="gemini-2.5-pro">gemini-2.5-pro</option>
+          <option value="gemini-2.5-flash">gemini-2.5-flash</option>
+        </select>
+        <button id="save-cloud-setup" class="button" type="button" style="margin-top:10px;width:100%;justify-content:center;"><span class="btn-icon">Save cloud settings</span></button>
+        <button id="install-cloud-deps" class="button" type="button" style="margin-top:8px;width:100%;justify-content:center;" title="pip install google-genai google-adk google-cloud-*"><span class="btn-icon">Install ADK &amp; Cloud SDKs</span></button>
+        <p id="cloud-setup-status" class="hint"></p>
+      </div>
+      <div class="section">
+        <div class="status-row"><span>Local memory</span>
+          <label class="switch" title="Use local documents to answer">
+            <input id="rag" type="checkbox">
+            <span class="slider"></span>
+          </label>
+        </div>
+      </div>
+      <div class="section">
+        <h2>Inference</h2>
+        <div class="status-row"><span>Temperature</span><span id="inf-temp-val" style="color:var(--cyan);font-size:12px;">0.7</span></div>
+        <input id="inf-temp" type="range" min="0" max="2" step="0.1" value="0.7" style="width:100%;accent-color:var(--violet);">
+        <div class="status-row" style="margin-top:8px;"><span>Top P</span><span id="inf-topp-val" style="color:var(--cyan);font-size:12px;">0.9</span></div>
+        <input id="inf-topp" type="range" min="0" max="1" step="0.05" value="0.9" style="width:100%;accent-color:var(--violet);">
+        <div class="status-row" style="margin-top:8px;"><span>Max Tokens</span><span id="inf-maxtok-val" style="color:var(--cyan);font-size:12px;">768</span></div>
+        <input id="inf-maxtok" type="range" min="64" max="2048" step="64" value="768" style="width:100%;accent-color:var(--violet);">
+        <div class="status-row" style="margin-top:8px;"><span>Repeat Penalty</span><span id="inf-rp-val" style="color:var(--cyan);font-size:12px;">1.1</span></div>
+        <input id="inf-rp" type="range" min="1" max="2" step="0.05" value="1.1" style="width:100%;accent-color:var(--violet);">
+        <div class="status-row" style="margin-top:8px;"><span>Min P</span><span id="inf-minp-val" style="color:var(--cyan);font-size:12px;">0.05</span></div>
+        <input id="inf-minp" type="range" min="0" max="1" step="0.01" value="0.05" style="width:100%;accent-color:var(--violet);">
+        <button id="save-inference" class="button" type="button" style="margin-top:10px;width:100%;text-align:center;justify-content:center;"><span class="btn-icon">Save Inference Params</span></button>
+      </div>
+      <div class="section" id="templates-section" style="display:none;">
+        <h2>Prompt Templates</h2>
+        <div id="templates-list" style="font-size:12px;"></div>
+        <div style="margin-top:8px;">
+          <input id="new-template-name" type="text" placeholder="Template name" style="width:100%;min-height:28px;border:1px solid var(--line);background:rgba(255,255,255,0.05);color:var(--text);border-radius:6px;padding:4px 8px;font-size:12px;outline:none;">
+        </div>
+        <div style="margin-top:4px;">
+          <textarea id="new-template-content" placeholder="Template content..." style="width:100%;min-height:60px;border:1px solid var(--line);background:rgba(255,255,255,0.05);color:var(--text);border-radius:6px;padding:4px 8px;font-size:12px;outline:none;resize:vertical;"></textarea>
+        </div>
+        <button id="save-template" class="button" type="button" style="margin-top:6px;width:100%;text-align:center;justify-content:center;font-size:12px;"><span class="btn-icon">Save Template</span></button>
+      </div>
+      <div class="section">
+        <h2>Export / Import</h2>
+        <div style="display:grid;gap:6px;">
+          <button id="export-md" class="button ghost" type="button" style="font-size:12px;"><span class="btn-icon">Export Markdown</span></button>
+          <button id="export-json" class="button ghost" type="button" style="font-size:12px;"><span class="btn-icon">Export JSON</span></button>
+          <button id="import-btn" class="button ghost" type="button" style="font-size:12px;"><span class="btn-icon">Import Conversations</span></button>
+          <input id="import-file" type="file" accept=".json" style="display:none;">
+        </div>
+      </div>
+      <div class="section">
+        <div class="status-row"><span>Theme</span>
+          <label class="switch" title="Toggle light/dark theme">
+            <input id="theme-toggle" type="checkbox">
+            <span class="slider"></span>
+          </label>
+        </div>
+      </div>
+      <div class="section" id="history-section">
+        <h2>History</h2>
+        <div class="sidebar-search">
+          <span class="search-icon">Search</span>
+          <input id="history-search" type="text" placeholder="Search conversations..." autocomplete="off">
+        </div>
+        <div id="history-list" style="max-height:220px; overflow-y:auto; font-size:12px; margin-top:8px;"></div>
+        <div style="margin-top:10px; display:flex; gap:8px; flex-wrap:wrap;">
+          <button id="history-refresh" class="button ghost" type="button" style="font-size:12px;"><span class="btn-icon">Refresh</span></button>
+          <button id="history-toggle" class="button ghost" type="button" style="font-size:12px;"><span class="btn-icon">Toggle</span></button>
+        </div>
+      </div>
+      <div class="section actions">
+        <button id="warm" class="button" type="button"><span class="btn-icon">Warm Model</span></button>
+        <button id="refresh" class="button" type="button"><span class="btn-icon">Refresh</span></button>
+        <button id="validate" class="button" type="button"><span class="btn-icon">Validate</span></button>
+        <button id="validate-strict" class="button" type="button"><span class="btn-icon">Validate Strict</span></button>
+        <button id="cloud-sync" class="button" type="button" title="Sync to Firestore/GCS (requires internet + GCP project)"><span class="btn-icon">Cloud Sync</span></button>
+        <button id="cli" class="button" type="button"><span class="btn-icon">Open CLI</span></button>
+        <button id="sign-off" class="button" type="button" style="background:var(--grad-bad); color:#fff; border-color:transparent;"><span class="btn-icon">Sign Off</span></button>
+      </div>
+    </aside>
     <main>
       <header>
-        <button id="menu-toggle" type="button" aria-label="Toggle sidebar" aria-expanded="false">☰</button>
+        <button id="menu-toggle" type="button" aria-label="Toggle sidebar" aria-expanded="false">Menu</button>
         <div class="headline">
           <h2>Conversation</h2>
           <p id="subtitle">Private, local, and under your control.</p>
         </div>
         <div class="header-actions">
-          <button id="clear-chat" class="button ghost" type="button" title="Clear conversation history (privacy)">🗑 Clear Chat</button>
+          <button id="clear-chat" class="button ghost" type="button" title="Clear conversation history (privacy)"><span class="btn-icon">Clear Chat</span></button>
           <div id="activity">Ready</div>
         </div>
       </header>
-
       <section id="chat" aria-live="polite"></section>
-
       <form id="composer">
-        <textarea id="message" placeholder="Ask Jampandu..." autocomplete="off"></textarea>
-        <button id="send" class="button primary" type="submit">Send</button>
+        <div style="display:flex; flex-direction:column;">
+          <textarea id="message" placeholder="Ask Jampandu..." autocomplete="off"></textarea>
+          <div class="shortcut-hint">Ctrl + Enter to send</div>
+        </div>
+        <button id="send" class="button primary" type="submit"><span class="send-icon">Send</span></button>
       </form>
     </main>
   </div>
-
+  <div class="app-footer">
+    <span>Jampandu v5 · Local AI Assistant</span>
+    <span>Fully private · Nothing leaves your device</span>
+  </div>
+</body>
+</html>
   <script>
     const chat = document.querySelector("#chat");
     const activity = document.querySelector("#activity");
     const messageInput = document.querySelector("#message");
     const sendButton = document.querySelector("#send");
 
-    function setBusy(isBusy, text = "Ready") {
+    function setBusy(isBusy, text) {
       activity.textContent = text;
       sendButton.disabled = isBusy;
-      const overlayActive = document.querySelector("#startup-overlay").classList.contains("active");
-      messageInput.disabled = isBusy || overlayActive;
+      messageInput.disabled = isBusy || document.querySelector("#startup-overlay").classList.contains("active");
     }
 
     function escapeHtml(s) {
       return s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
     }
+
     function renderMarkdown(text) {
       let html = escapeHtml(text);
-      // code blocks ```...```
-      html = html.replace(/```([\s\S]*?)```/g, (m, code) => `<pre><code>${code}</code></pre>`);
-      // inline code `...`
+      html = html.replace(/```([\s\S]*?)```/g, function(m, code) { return '<pre><code>' + code + '</code></pre>'; });
       html = html.replace(/`([^`]+?)`/g, "<code>$1</code>");
-      // bold **...**
       html = html.replace(/\*\*([^\*]+?)\*\*/g, "<strong>$1</strong>");
-      // italic *...* (avoid **)
       html = html.replace(/(?<!\*)\*([^\*]+?)\*(?!\*)/g, "<em>$1</em>");
-      // simple unordered lists: lines starting with - or *
       html = html.replace(/^(?:-|\*) (.+)$/gm, "<li>$1</li>");
-      html = html.replace(/(<li>.*<\/li>)/gs, (m) => `<ul>${m}</ul>`);
-      // line breaks
+      html = html.replace(/(<li>.*<\/li>)/gs, function(m) { return '<ul>' + m + '</ul>'; });
       html = html.replace(/\n/g, "<br>");
-      // fix <br> inside <pre>
-      html = html.replace(/<pre><code>([\s\S]*?)<\/code><\/pre>/g, (m, c) => `<pre><code>${c.replace(/<br>/g, "\n")}</code></pre>`);
+      html = html.replace(/<pre><code>([\s\S]*?)<\/code><\/pre>/g, function(m, c) { return '<pre><code>' + c.replace(/<br>/g, "\n") + '</code></pre>'; });
       html = html.replace(/<ul>(?:<br>)*/g, "<ul>").replace(/(?:<br>)*<\/ul>/g, "</ul>").replace(/<\/li><br><li>/g, "</li><li>");
       return html;
     }
 
     function scrollToBottom() {
-      // ALWAYS pin chat to absolute end — sidebar stays pinned (fixed), only #chat moves
-      const doScroll = (instant) => {
-        // only scroll #chat — never window/app/sidebar
-        const max = chat.scrollHeight + 9999;
+      var doScroll = function(instant) {
+        var max = chat.scrollHeight + 9999;
         try { chat.scrollTo({ top: max, behavior: instant ? "auto" : "smooth" }); } catch(e) { chat.scrollTop = chat.scrollHeight; }
-        chat.scrollTop = chat.scrollHeight;
-        // final instant snap — ensures we land at true bottom without moving sidebar
         chat.scrollTop = chat.scrollHeight;
       };
       doScroll(false);
-      requestAnimationFrame(() => {
-        doScroll(false);
-        requestAnimationFrame(() => doScroll(true));
-      });
-      // keep pinning until layout fully settles (fonts, code blocks, images)
-      let ticks = 0;
-      const pin = setInterval(() => {
-        doScroll(true);
-        if (++ticks > 8) clearInterval(pin);
-      }, 60);
-      setTimeout(() => doScroll(true), 250);
-      setTimeout(() => doScroll(true), 600);
+      requestAnimationFrame(function() { doScroll(false); requestAnimationFrame(function() { doScroll(true); }); });
+      var ticks = 0;
+      var pin = setInterval(function() { doScroll(true); if (++ticks > 8) clearInterval(pin); }, 60);
+      setTimeout(function() { doScroll(true); }, 250);
+      setTimeout(function() { doScroll(true); }, 600);
     }
-    // Auto down-scroll on ANY chat DOM change — keeps pinned UNTIL END even while streaming
-    const _autoScrollObserver = new MutationObserver(() => scrollToBottom());
+
+    var _autoScrollObserver = new MutationObserver(function() { scrollToBottom(); });
     _autoScrollObserver.observe(chat, { childList: true, subtree: true, characterData: true });
     window.addEventListener("resize", scrollToBottom);
     chat.addEventListener("DOMNodeInserted", scrollToBottom);
-    // While typing/generating, keep pinning every 80ms so long responses stay at end
-    let _pinInterval = null;
-    function startPinning() {
-      if (_pinInterval) return;
-      _pinInterval = setInterval(scrollToBottom, 80);
-    }
-    function stopPinning() {
-      if (_pinInterval) { clearInterval(_pinInterval); _pinInterval = null; }
-      // one final snap to true bottom
-      setTimeout(() => {
-        try { chat.scrollTo({ top: chat.scrollHeight + 9999, behavior: "auto" }); } catch(e) {}
-        chat.scrollTop = chat.scrollHeight;
-      }, 30);
+
+    var _pinInterval = null;
+    function startPinning() { if (_pinInterval) return; _pinInterval = setInterval(scrollToBottom, 80); }
+    function stopPinning() { if (_pinInterval) { clearInterval(_pinInterval); _pinInterval = null; } setTimeout(function() { try { chat.scrollTo({ top: chat.scrollHeight + 9999, behavior: "auto" }); } catch(e) {} chat.scrollTop = chat.scrollHeight; }, 30); }
+
+    function getTimestamp() {
+      return new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     }
 
     function addMessage(role, text) {
-      const wrapper = document.createElement("article");
-      wrapper.className = `message ${role}`;
-
-      const name = document.createElement("div");
-      name.className = "name";
-      name.textContent = role === "user" ? "You" : role === "assistant" ? "Jampandu" : "System";
-
-      const body = document.createElement("div");
+      var wrapper = document.createElement("article");
+      wrapper.className = "message " + role;
+      var ts = getTimestamp();
+      var header = document.createElement("div");
+      header.className = "msg-header";
+      var nameSpan = document.createElement("span");
+      nameSpan.className = "name";
+      nameSpan.textContent = role === "user" ? "You" : role === "assistant" ? "Jampandu" : "System";
+      var tsSpan = document.createElement("span");
+      tsSpan.className = "timestamp";
+      tsSpan.textContent = ts;
+      header.appendChild(nameSpan);
+      header.appendChild(tsSpan);
+      var body = document.createElement("div");
       body.className = "text";
+      if (role === "assistant" || role === "system") { body.innerHTML = renderMarkdown(text); }
+      else { body.textContent = text; }
+      wrapper.appendChild(header);
+      wrapper.appendChild(body);
+
       if (role === "assistant" || role === "system") {
-        body.innerHTML = renderMarkdown(text);
-      } else {
-        body.textContent = text;
+        var copyBtn = document.createElement("button");
+        copyBtn.className = "copy-btn";
+        copyBtn.type = "button";
+        copyBtn.title = "Copy message";
+        copyBtn.textContent = "Copy";
+        copyBtn.addEventListener("click", function() {
+          if (navigator.clipboard) {
+            navigator.clipboard.writeText(text).then(function() {
+              copyBtn.textContent = "Copied";
+              copyBtn.classList.add("copied");
+              setTimeout(function() { copyBtn.textContent = "Copy"; copyBtn.classList.remove("copied"); }, 1500);
+            }).catch(function() {});
+          }
+        });
+        wrapper.appendChild(copyBtn);
       }
 
-      wrapper.append(name, body);
       chat.appendChild(wrapper);
       scrollToBottom();
+      return wrapper;
     }
 
-    // Typing indicator (for P1: show during 8s+ cold boot generation)
-    let typingEl = null;
+    var typingEl = null;
     function showTyping() {
       if (typingEl) return;
       typingEl = document.createElement("article");
       typingEl.className = "message assistant typing-msg";
-      const name = document.createElement("div");
-      name.className = "name";
-      name.textContent = "Jampandu";
-      const body = document.createElement("div");
+      var header = document.createElement("div");
+      header.className = "msg-header";
+      var nameSpan = document.createElement("span");
+      nameSpan.className = "name";
+      nameSpan.textContent = "Jampandu";
+      var tsSpan = document.createElement("span");
+      tsSpan.className = "timestamp";
+      tsSpan.textContent = getTimestamp();
+      header.appendChild(nameSpan);
+      header.appendChild(tsSpan);
+      var body = document.createElement("div");
       body.className = "text";
-      body.innerHTML = '<span class="typing"><span></span><span></span><span></span></span> <span style="color:var(--muted);font-size:13px;margin-left:6px;">Thinking…</span>';
-      typingEl.append(name, body);
+      body.innerHTML = '<span class="typing"><span></span><span></span><span></span></span> <span style="color:var(--muted);font-size:13px;margin-left:6px;">Thinking...</span>';
+      typingEl.appendChild(header);
+      typingEl.appendChild(body);
       chat.appendChild(typingEl);
       scrollToBottom();
       startPinning();
-      setBusy(true, "Thinking…");
+      setBusy(true, "Thinking...");
     }
+
     function hideTyping() {
       if (typingEl) { typingEl.remove(); typingEl = null; }
       stopPinning();
@@ -1237,502 +751,716 @@ HTML = r"""<!doctype html>
     }
 
     function setPill(id, label, tone) {
-      const el = document.querySelector(`#${id}`);
-      el.textContent = label;
-      el.className = `pill ${tone}`;
-      // P1: Cold badge tooltip
+      var el = document.querySelector("#" + id);
+      if (!el) return;
+      el.className = "pill " + tone;
+      var dot = (tone === 'ok' || tone === 'warn' || tone === 'bad') ? '<span class="dot"></span>' : '';
+      el.innerHTML = dot + ' ' + label;
       if (id === "server") {
-        if (label === "Cold") {
-          el.title = "Model is cold - click Warm Model or send a message to warm it up";
-        } else if (label === "Warm") {
-          el.title = "Model is warm and ready";
-        } else {
-          el.title = "";
-        }
+        el.title = label === "Cold" ? "Model is cold - click Warm Model or send a message to warm it up" : label === "Warm" ? "Model is warm and ready" : "";
       }
     }
 
     async function clearChat() {
-      // Privacy: clear frontend and backend conversation
       try { await api("/api/clear-chat", {}); } catch(e) {}
       chat.innerHTML = "";
       addMessage("system", "Chat cleared.");
     }
 
-    async function api(path, body = null) {
-      const token = sessionStorage.getItem("auth_token") || localStorage.getItem("auth_token") || "";
-      const headers = {"Content-Type": "application/json"};
+    async function api(path, body) {
+      body = body || null;
+      var token = sessionStorage.getItem("auth_token") || localStorage.getItem("auth_token") || "";
+      var headers = {"Content-Type": "application/json"};
       if (token) headers["X-Auth-Token"] = token;
-      const options = body ? {
-        method: "POST",
-        headers,
-        body: JSON.stringify(body)
-      } : { headers };
-      // include token even for GET-like POST with empty body
+      var options = body ? { method: "POST", headers: headers, body: JSON.stringify(body) } : { headers: headers };
       if (!body && token) options.headers = headers;
-      const response = await fetch(path, options);
+      var response = await fetch(path, options);
       if (response.status === 401) {
-        // auth failed — force overlay back
         sessionStorage.removeItem("auth_token");
         localStorage.removeItem("auth_token");
-        try { sessionStorage.removeItem("startup_verified"); } catch(e){}
-        // re-check gate
-        const st = await fetch("/api/status").then(r=>r.json()).catch(()=>null);
+        try { sessionStorage.removeItem("startup_verified"); } catch(e) {}
+        var st = await fetch("/api/status").then(function(r) { return r.json(); }).catch(function() { return null; });
         if (st) checkStartupGate(st);
         throw new Error("Not authorized. Please verify password.");
       }
       if (!response.ok) {
-        // try to parse error json for message
-        let msg = `Request failed: ${response.status}`;
-        try { const j = await response.json(); if (j.output) msg = j.output; } catch(e){}
+        var msg = "Request failed: " + response.status;
+        try { var j = await response.json(); if (j.output) msg = j.output; } catch(e) {}
         throw new Error(msg);
       }
       return response.json();
     }
 
     function updateWarmUI(prog) {
-      const wrap = document.querySelector("#warm-progress");
-      const bar = document.querySelector("#warm-bar");
-      const pct = document.querySelector("#warm-pct");
-      const tm = document.querySelector("#warm-time");
-      const log = document.querySelector("#warm-log");
-      if (!prog) {
-        if (document.querySelector("#server")?.textContent.trim() === "Warm") wrap.style.display = "none";
-        return;
-      }
+      var wrap = document.querySelector("#warm-progress");
+      var bar = document.querySelector("#warm-bar");
+      var pct = document.querySelector("#warm-pct");
+      var tm = document.querySelector("#warm-time");
+      var log = document.querySelector("#warm-log");
+      if (!prog) { if (document.querySelector("#server") && document.querySelector("#server").textContent.trim() === "Warm") wrap.style.display = "none"; return; }
       if (prog.running) { wrap.style.display = "none"; return; }
       wrap.style.display = "block";
       if (prog.overdue) {
-        pct.textContent = "99% • finalizing...";
-        tm.textContent = prog.elapsed + "s elapsed • " + (prog.size_gb||"?") + "GB • retrying if needed";
-        bar.style.width = "99%";
-        bar.style.background = "linear-gradient(90deg, #fbbf24, #fb923c)";
+        pct.textContent = "99% - finalizing...";
+        tm.textContent = prog.elapsed + "s elapsed - " + (prog.size_gb||"?") + "GB - retrying";
+        bar.style.width = "99%"; bar.style.background = "linear-gradient(90deg, #fbbf24, #fb923c)";
       } else {
         pct.textContent = prog.percent + "%";
-        tm.textContent = prog.elapsed + "s elapsed • ETA " + prog.eta + "s • " + (prog.size_gb||"?") + "GB";
-        bar.style.width = prog.percent + "%";
-        bar.style.background = "var(--grad-brand)";
+        tm.textContent = prog.elapsed + "s elapsed - ETA " + prog.eta + "s - " + (prog.size_gb||"?") + "GB";
+        bar.style.width = prog.percent + "%"; bar.style.background = "var(--grad-brand)";
       }
       log.textContent = prog.log ? prog.log.slice(-500) : "";
-      const sub = document.querySelector("#subtitle");
-      if (sub) sub.textContent = prog.overdue ? `Warming 99% — finalizing (${prog.elapsed}s)` : `Warming ${prog.percent}% (${prog.elapsed}s, ~${prog.eta}s left)`;
+      var sub = document.querySelector("#subtitle");
+      if (sub) sub.textContent = prog.overdue ? "Warming 99% - finalizing (" + prog.elapsed + "s)" : "Warming " + prog.percent + "% (" + prog.elapsed + "s, ~" + prog.eta + "s left)";
     }
+
     async function refreshStatus() {
       try {
-        const status = await api("/api/status");
+        var status = await api("/api/status");
         setPill("config", status.config_exists ? "OK" : "Missing", status.config_exists ? "ok" : "bad");
         setPill("model", status.model_exists ? "Ready" : "Missing", status.model_exists ? "ok" : "bad");
         setPill("runtime", status.llama_exists ? "Ready" : "Missing", status.llama_exists ? "ok" : "bad");
         setPill("server", status.model_server_running ? "Warm" : "Cold", status.model_server_running ? "ok" : "warn");
-        // warm progress bar with % and time by
         if (status.warm_progress) updateWarmUI(status.warm_progress);
-        else if (status.model_server_running) { document.querySelector("#warm-progress").style.display="none"; }
-        document.querySelector("#internet-toggle").checked = !!status.internet_allowed;
-        document.querySelector("#startup-toggle").checked = !!status.startup_auth_enabled;
+        else if (status.model_server_running) { var el = document.querySelector("#warm-progress"); if (el) el.style.display = "none"; }
+        var internetToggle = document.querySelector("#internet-toggle");
+        if (internetToggle) internetToggle.checked = !!status.internet_allowed;
+        var startupToggle = document.querySelector("#startup-toggle");
+        if (startupToggle) startupToggle.checked = !!status.startup_auth_enabled;
         setPill("voice", status.voice_enabled ? "On" : "Off", status.voice_enabled ? "ok" : "warn");
-        const voiceEl = document.querySelector("#voice");
-        voiceEl.title = status.voice_enabled ? "Voice input is enabled - click to speak" : "Voice input is off - enable in config";
-        document.querySelector("#subtitle").textContent = status.summary;
-        // Check startup verification only on first load / when session not verified
+        var voiceEl = document.querySelector("#voice");
+        if (voiceEl) voiceEl.title = status.voice_enabled ? "Voice input is enabled - click to speak" : "Voice input is off - enable in config";
+        // Cloud pills - Gemini / GCP / ADK
+        var geminiLabel, geminiTone;
+        if (!status.gemini_enabled) { geminiLabel = "Off"; geminiTone = "warn"; }
+        else if (!status.gemini_has_key && !status.gcp_project) { geminiLabel = "No key"; geminiTone = "warn"; }
+        else if (!status.internet_allowed) { geminiLabel = "Offline"; geminiTone = "warn"; }
+        else if (status.gemini_available) { geminiLabel = status.gemini_model || "Ready"; geminiTone = "ok"; }
+        else { geminiLabel = "No key"; geminiTone = "warn"; }
+        setPill("gemini", geminiLabel, geminiTone);
+        var g = document.querySelector("#gemini");
+        if (g) g.title = (status.gemini_backend || "Click to set up Gemini") + " — click to configure";
+        var cloudLabel, cloudTone;
+        if (!status.gcp_project) { cloudLabel = "No GCP"; cloudTone = "warn"; }
+        else if (!status.internet_allowed) { cloudLabel = "Offline"; cloudTone = "warn"; }
+        else if (status.firestore_can_sync) { cloudLabel = "Firestore"; cloudTone = "ok"; }
+        else { cloudLabel = "No sync"; cloudTone = "warn"; }
+        setPill("cloud", cloudLabel, cloudTone);
+        var c = document.querySelector("#cloud");
+        if (c) c.title = (status.gcp_project || "No GCP project") + " / " + (status.gcs_bucket || "no bucket") + " — click to configure";
+        var adkLabel = status.adk_installed ? "Ready" : "Missing";
+        setPill("adk", adkLabel, status.adk_installed ? "ok" : "warn");
+        var a = document.querySelector("#adk");
+        if (a) a.title = status.adk_installed ? "Google ADK installed" : "ADK SDK missing — click to install";
+        var proj = document.querySelector("#cloud-gcp-project");
+        if (proj && document.activeElement !== proj) proj.value = status.gcp_project || "";
+        var bucket = document.querySelector("#cloud-gcs-bucket");
+        if (bucket && document.activeElement !== bucket) bucket.value = status.gcs_bucket || "";
+        var modelSel = document.querySelector("#cloud-gemini-model");
+        if (modelSel && status.gemini_model) {
+          if (![].some.call(modelSel.options, function(o) { return o.value === status.gemini_model; })) {
+            var opt = document.createElement("option");
+            opt.value = status.gemini_model; opt.textContent = status.gemini_model;
+            modelSel.appendChild(opt);
+          }
+          modelSel.value = status.gemini_model;
+        }
+        var keyHint = document.querySelector("#cloud-key-hint");
+        if (keyHint) keyHint.textContent = status.gemini_has_key ? ("Key " + (status.gemini_key_hint || "saved") + ". Leave blank to keep it.") : "No key saved yet. Paste an AI Studio key, then Save.";
+        var sub = document.querySelector("#subtitle");
+        if (sub) sub.textContent = status.summary + (status.gemini_available ? " · Cloud Gemini ready" : "");
         checkStartupGate(status);
-      } catch (error) {
-        addMessage("system", error.message);
-      }
+      } catch (error) { addMessage("system", error.message); }
     }
-    // poll warm progress every 1s while cold
-    setInterval(async () => {
-      const srv = document.querySelector("#server");
+
+    setInterval(function() {
+      var srv = document.querySelector("#server");
       if (!srv || srv.textContent.trim() === "Warm") return;
       try {
-        const prog = await fetch("/api/warm-progress").then(r=>r.json()).catch(()=>null);
-        if (prog && !prog.running) updateWarmUI(prog);
-        else if (prog && prog.running) document.querySelector("#warm-progress").style.display="none";
-      } catch(e){}
+        fetch("/api/warm-progress").then(function(r) { return r.json(); }).then(function(prog) {
+          if (prog && !prog.running) updateWarmUI(prog);
+          else if (prog && prog.running) { var el = document.querySelector("#warm-progress"); if (el) el.style.display = "none"; }
+        }).catch(function() {});
+      } catch(e) {}
     }, 1000);
 
-    // --- Startup Verification Logic: ONLY on website start, not every internet toggle ---
-    const startupOverlay = document.querySelector("#startup-overlay");
-    const startupInput = document.querySelector("#startup-password");
-    const startupError = document.querySelector("#startup-error");
-    const startupBtn = document.querySelector("#startup-verify");
+    var startupOverlay = document.querySelector("#startup-overlay");
+    var startupInput = document.querySelector("#startup-password");
+    var startupError = document.querySelector("#startup-error");
+    var startupBtn = document.querySelector("#startup-verify");
 
     function checkStartupGate(status) {
-      // If startup lock is OFF -> never show verification
-      if (!status.startup_auth_enabled) {
-        hideStartupOverlay();
-        return;
-      }
-      // Token-based: if we have a valid token, hide overlay regardless of sessionStorage flag
-      const hasToken = !!(sessionStorage.getItem("auth_token") || localStorage.getItem("auth_token"));
-      if (hasToken) {
-        hideStartupOverlay();
-        return;
-      }
-      // Back-compat: old sessionStorage flag
-      if (sessionStorage.getItem("startup_verified") === "true") {
-        // migrate: keep hidden but require re-auth next reload without token
-        hideStartupOverlay();
-        return;
-      }
+      if (!status.startup_auth_enabled) { hideStartupOverlay(); return; }
+      var hasToken = !!(sessionStorage.getItem("auth_token") || localStorage.getItem("auth_token"));
+      if (hasToken) { hideStartupOverlay(); return; }
+      if (sessionStorage.getItem("startup_verified") === "true") { hideStartupOverlay(); return; }
       showStartupOverlay();
     }
 
-    function showStartupOverlay() {
-      startupOverlay.classList.add("active");
-      startupOverlay.setAttribute("aria-hidden", "false");
-      messageInput.disabled = true;
-      sendButton.disabled = true;
-      setTimeout(() => startupInput.focus(), 100);
-    }
-    function hideStartupOverlay() {
-      startupOverlay.classList.remove("active");
-      startupOverlay.setAttribute("aria-hidden", "true");
-      messageInput.disabled = false;
-      sendButton.disabled = false;
-      startupError.textContent = "";
-      startupInput.value = "";
-    }
+    function showStartupOverlay() { if (startupOverlay) { startupOverlay.classList.add("active"); startupOverlay.setAttribute("aria-hidden", "false"); messageInput.disabled = true; sendButton.disabled = true; setTimeout(function() { startupInput.focus(); }, 100); } }
+    function hideStartupOverlay() { if (startupOverlay) { startupOverlay.classList.remove("active"); startupOverlay.setAttribute("aria-hidden", "true"); messageInput.disabled = false; sendButton.disabled = false; if (startupError) startupError.textContent = ""; if (startupInput) startupInput.value = ""; } }
 
     async function handleStartupVerify() {
-      const pwd = startupInput.value;
-      if (!pwd) { startupError.textContent = "Please enter password."; return; }
+      var pwd = startupInput.value;
+      if (!pwd) { if (startupError) startupError.textContent = "Please enter password."; return; }
       startupBtn.disabled = true;
-      startupError.textContent = "";
+      if (startupError) startupError.textContent = "";
+      var origText = startupBtn.textContent;
       startupBtn.textContent = "Verifying...";
       try {
-        const res = await api("/api/verify-startup", { password: pwd });
+        var res = await api("/api/verify-startup", { password: pwd });
         if (res.ok) {
-          if (res.token) {
-            sessionStorage.setItem("auth_token", res.token);
-            // also persist in localStorage as backup for page reloads in same browser (per spec: only on website start, but we support)
-            // use sessionStorage primary for per-tab isolation; copy to localStorage too for convenience
-            try { localStorage.setItem("auth_token", res.token); } catch(e){}
-          }
+          if (res.token) { sessionStorage.setItem("auth_token", res.token); try { localStorage.setItem("auth_token", res.token); } catch(e) {} }
           sessionStorage.setItem("startup_verified", "true");
           hideStartupOverlay();
           addMessage("system", res.output || "Verified. Welcome!");
-          // kick warm now that we are authorized (was deferred until auth)
           setTimeout(ensureWarmInBackground, 800);
         } else {
-          startupError.textContent = res.output || "Incorrect password.";
-          if (res.retry_after) startupError.textContent += ` Retry after ${res.retry_after}s`;
+          if (startupError) startupError.textContent = res.output || "Incorrect password.";
+          if (res.retry_after && startupError) startupError.textContent += " Retry after " + res.retry_after + "s";
         }
-      } catch (e) {
-        startupError.textContent = e.message;
-      } finally {
-        startupBtn.disabled = false;
-        startupBtn.textContent = "Unlock";
-      }
+      } catch (e) { if (startupError) startupError.textContent = e.message; }
+      finally { startupBtn.disabled = false; startupBtn.textContent = origText; }
     }
 
-    // Hardening: if someone removes overlay via inspect, re-enforce server gate within 800ms
-    setInterval(() => {
-      const shouldLock = document.querySelector("#startup-toggle")?.checked;
-      // we check status via last known status cache? Instead just check token presence
-      const hasToken = !!(sessionStorage.getItem("auth_token") || localStorage.getItem("auth_token"));
-      const overlay = document.querySelector("#startup-overlay");
-      const isActive = overlay.classList.contains("active");
-      // if lock is ON and no token, force overlay back
+    setInterval(function() {
+      var shouldLock = document.querySelector("#startup-toggle") && document.querySelector("#startup-toggle").checked;
+      var hasToken = !!(sessionStorage.getItem("auth_token") || localStorage.getItem("auth_token"));
+      var overlay = document.querySelector("#startup-overlay");
+      var isActive = overlay && overlay.classList.contains("active");
       if (shouldLock && !hasToken && !isActive) {
-        // re-fetch status to be sure
-        fetch("/api/status").then(r=>r.json()).then(st=>{
-          if (st.startup_auth_enabled) showStartupOverlay();
-        }).catch(()=>{ if (!hasToken) showStartupOverlay(); });
+        fetch("/api/status").then(function(r) { return r.json(); }).then(function(st) { if (st.startup_auth_enabled) showStartupOverlay(); }).catch(function() { if (!hasToken) showStartupOverlay(); });
       }
-      // also keep inputs disabled if overlay active
-      if (isActive) {
-        messageInput.disabled = true;
-        sendButton.disabled = true;
-      }
+      if (isActive) { messageInput.disabled = true; sendButton.disabled = true; }
     }, 800);
 
     async function toggleStartupAuth(event) {
-      const toggle = event.target;
-      const enabled = toggle.checked;
-      const pwd = window.prompt(enabled ? "Enter password to ENABLE startup lock:" : "Enter password to DISABLE startup lock:");
+      var toggle = event.target; var enabled = toggle.checked;
+      var pwd = window.prompt(enabled ? "Enter password to ENABLE startup lock:" : "Enter password to DISABLE startup lock:");
       if (pwd === null) { toggle.checked = !enabled; return; }
       toggle.disabled = true;
       try {
-        const res = await api("/api/set-startup-auth", { enabled, password: pwd });
-        if (!res.ok) {
-          toggle.checked = !enabled;
-        }
+        var res = await api("/api/set-startup-auth", { enabled: enabled, password: pwd });
+        if (!res.ok) { toggle.checked = !enabled; }
         addMessage("system", res.output);
-        if (!enabled) {
-          // If turned OFF, clear session gate so no overlay next reload
-          sessionStorage.setItem("startup_verified", "true");
-          hideStartupOverlay();
-        } else {
-          sessionStorage.removeItem("startup_verified");
-        }
-      } catch (e) {
-        toggle.checked = !enabled;
-        addMessage("system", e.message);
-      } finally {
-        toggle.disabled = false;
-        refreshStatus();
-      }
+        if (!enabled) { sessionStorage.setItem("startup_verified", "true"); hideStartupOverlay(); }
+        else { sessionStorage.removeItem("startup_verified"); }
+      } catch (e) { toggle.checked = !enabled; addMessage("system", e.message); }
+      finally { toggle.disabled = false; refreshStatus(); }
     }
 
     async function sendMessage(event) {
-      event.preventDefault();
-      const text = messageInput.value.trim();
+      if (event) event.preventDefault();
+      var text = messageInput.value.trim();
       if (!text) return;
-
       messageInput.value = "";
       addMessage("user", text);
-      // Cold UX fix: tell user why first message is slow once
-      const serverPill = document.querySelector("#server");
-      const isCold = serverPill && serverPill.textContent.trim() === "Cold";
-      if (isCold) {
-        addMessage("system", "Model is Cold — warming up now (one-time ~20-40s for 4GB model). Next replies will be instant.");
-        setBusy(true, "Warming model...");
-      }
+      var serverPill = document.querySelector("#server");
+      var isCold = serverPill && serverPill.textContent.trim() === "Cold";
+      if (isCold) { addMessage("system", "Model is Cold - warming up now."); setBusy(true, "Warming model..."); }
+      var useRag = document.querySelector("#rag") && document.querySelector("#rag").checked;
       showTyping();
       try {
-        const result = await api("/api/query", {
-          message: text,
-          use_rag: document.querySelector("#rag").checked
-        });
-        hideTyping();
-        addMessage("assistant", result.output || "No response.");
-      } catch (error) {
-        hideTyping();
-        addMessage("system", error.message);
-      } finally {
-        setBusy(false);
-        hideTyping();
-        refreshStatus();
-      }
+        var token = sessionStorage.getItem("auth_token") || localStorage.getItem("auth_token") || "";
+        var headers = {"Content-Type": "application/json"};
+        if (token) headers["X-Auth-Token"] = token;
+        var response = await fetch("/api/stream", { method: "POST", headers: headers, body: JSON.stringify({message: text, use_rag: useRag}) });
+        if (!response.ok) throw new Error("Stream failed: " + response.status);
+        var reader = response.body.getReader();
+        var decoder = new TextDecoder();
+        var buffer = "";
+        var assistantMsg = null;
+        var assistantText = "";
+        while (true) {
+          var _r = await reader.read();
+          if (_r.done) break;
+          buffer += decoder.decode(_r.value, {stream: true});
+          var lines = buffer.split("\n");
+          buffer = lines.pop();
+          for (var _i = 0; _i < lines.length; _i++) {
+            var _line = lines[_i].trim();
+            if (!_line || !_line.startsWith("data: ")) continue;
+            try {
+              var evt = JSON.parse(_line.slice(6));
+              if (evt.type === "token") {
+                if (!assistantMsg) { hideTyping(); assistantMsg = addMessage("assistant", ""); var _oldCopy = assistantMsg.querySelector(".copy-btn"); if (_oldCopy) _oldCopy.remove(); }
+                assistantText += evt.content;
+                var _body = assistantMsg.querySelector(".text");
+                if (_body) _body.textContent = assistantText;
+              } else if (evt.type === "done") {
+                if (assistantMsg) {
+                  var _body2 = assistantMsg.querySelector(".text");
+                  if (_body2) _body2.innerHTML = renderMarkdown(assistantText);
+                  var _cb = document.createElement("button");
+                  _cb.className = "copy-btn"; _cb.type = "button"; _cb.title = "Copy message"; _cb.textContent = "Copy";
+                  _cb.addEventListener("click", function() {
+                    if (navigator.clipboard) {
+                      navigator.clipboard.writeText(assistantText).then(function() {
+                        _cb.textContent = "Copied"; _cb.classList.add("copied");
+                        setTimeout(function() { _cb.textContent = "Copy"; _cb.classList.remove("copied"); }, 1500);
+                      }).catch(function() {});
+                    }
+                  });
+                  assistantMsg.appendChild(_cb);
+                }
+              } else if (evt.type === "error") {
+                hideTyping(); addMessage("system", evt.message);
+              }
+            } catch(_e) {}
+          }
+        }
+        if (assistantMsg && !assistantMsg.querySelector(".copy-btn")) {
+          var _cb2 = document.createElement("button"); _cb2.className = "copy-btn"; _cb2.type = "button"; _cb2.title = "Copy message"; _cb2.textContent = "Copy";
+          _cb2.addEventListener("click", function() {
+            if (navigator.clipboard) {
+              navigator.clipboard.writeText(assistantText).then(function() {
+                _cb2.textContent = "Copied"; _cb2.classList.add("copied");
+                setTimeout(function() { _cb2.textContent = "Copy"; _cb2.classList.remove("copied"); }, 1500);
+              }).catch(function() {});
+            }
+          });
+          assistantMsg.appendChild(_cb2);
+        }
+      } catch (error) { hideTyping(); addMessage("system", error.message); }
+      finally { setBusy(false); hideTyping(); refreshStatus(); }
     }
 
     async function warmModel() {
-      // P1: Fix misleading Starting... -> check if already warm first
-      const serverPill = document.querySelector("#server");
-      const alreadyWarm = serverPill && serverPill.textContent.trim() === "Warm";
+      var serverPill = document.querySelector("#server");
+      var alreadyWarm = serverPill && serverPill.textContent.trim() === "Warm";
       if (alreadyWarm) {
         addMessage("system", "Model server is already warm.");
-        // Still verify via API but don't show Starting...
-        try {
-          const result = await api("/api/warm-model", {});
-          // Only show if not duplicate Already warm
-          if (result.output && result.output !== "Model server is already warm." ) {
-            addMessage("system", result.output);
-          }
-        } catch (error) {
-          addMessage("system", error.message);
-        } finally {
-          refreshStatus();
-        }
-        return;
+        try { var result = await api("/api/warm-model", {}); if (result.output && result.output !== "Model server is already warm.") addMessage("system", result.output); } catch (error) { addMessage("system", error.message); }
+        refreshStatus(); return;
       }
       setBusy(true, "Warming model...");
       showTyping();
       addMessage("system", "Starting the local model server. First load can take a while.");
       try {
-        const result = await api("/api/warm-model", {});
-        hideTyping();
-        addMessage("system", result.output || "Model server is ready.");
-      } catch (error) {
-        hideTyping();
-        addMessage("system", error.message);
-      } finally {
-        hideTyping();
-        setBusy(false);
-        refreshStatus();
-      }
+        var result = await api("/api/warm-model", {});
+        hideTyping(); addMessage("system", result.output || "Model server is ready.");
+      } catch (error) { hideTyping(); addMessage("system", error.message); }
+      finally { hideTyping(); setBusy(false); refreshStatus(); }
     }
 
-    async function runValidation(strict = false) {
+    async function runValidation(strict) {
+      strict = strict || false;
       setBusy(true, strict ? "Validating (strict)..." : "Validating...");
       addMessage("system", strict ? "Running package validation (--strict: model + binary required)..." : "Running package validation...");
-      try {
-        const result = await api("/api/validate", { strict });
-        addMessage("system", result.output || "Validation completed.");
-      } catch (error) {
-        addMessage("system", error.message);
-      } finally {
-        setBusy(false);
-        refreshStatus();
-      }
+      try { var result = await api("/api/validate", { strict: strict }); addMessage("system", result.output || "Validation completed."); } catch (error) { addMessage("system", error.message); }
+      finally { setBusy(false); refreshStatus(); }
     }
 
     async function openCli() {
-      try {
-        const result = await api("/api/open-cli", {});
-        addMessage("system", result.output);
-      } catch (error) {
-        addMessage("system", error.message);
-      }
+      try { var result = await api("/api/open-cli", {}); addMessage("system", result.output); } catch (error) { addMessage("system", error.message); }
     }
 
     async function toggleInternet(event) {
-      const toggle = event.target;
-      const enabled = toggle.checked;
-      // Per prompt: Internet ON/OFF is a simple toggle. Password is verified ONLY
-      // once on website startup via the startup overlay, not every time you toggle internet.
-      toggle.disabled = true;
+      var toggle = event.target; var enabled = toggle.checked; toggle.disabled = true;
+      try { var result = await api("/api/toggle-internet", { enabled: enabled }); if (!result.ok) toggle.checked = !enabled; addMessage("system", result.output || (enabled ? "Internet mode enabled." : "Internet mode disabled.")); } catch (error) { toggle.checked = !enabled; addMessage("system", error.message); }
+      finally { toggle.disabled = false; refreshStatus(); }
+    }
+    async function cloudSync() {
+      setBusy(true, "Syncing to cloud...");
+      addMessage("system", "Syncing conversations + brain to Firestore/GCS...");
+      try { var result = await api("/api/cloud-sync", {}); addMessage("system", result.output || JSON.stringify(result)); } catch (error) { addMessage("system", error.message); }
+      finally { setBusy(false); refreshStatus(); }
+    }
+
+    function openCloudSetup() {
+      var section = document.querySelector("#cloud-setup-section");
+      if (section) section.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      var key = document.querySelector("#cloud-gemini-key");
+      if (key) key.focus();
+    }
+
+    function setCloudHint(text) {
+      var el = document.querySelector("#cloud-setup-status");
+      if (el) el.textContent = text || "";
+    }
+
+    async function saveCloudSetup() {
+      var keyEl = document.querySelector("#cloud-gemini-key");
+      var projEl = document.querySelector("#cloud-gcp-project");
+      var bucketEl = document.querySelector("#cloud-gcs-bucket");
+      var modelEl = document.querySelector("#cloud-gemini-model");
+      var payload = {
+        gcp_project: projEl ? projEl.value.trim() : "",
+        gcs_bucket: bucketEl ? bucketEl.value.trim() : "",
+        gemini_model: modelEl ? modelEl.value : "gemini-2.5-pro",
+        gemini_enabled: true
+      };
+      if (keyEl && keyEl.value.trim()) payload.gemini_api_key = keyEl.value.trim();
+      setBusy(true, "Saving cloud settings...");
+      setCloudHint("Saving…");
       try {
-        const result = await api("/api/toggle-internet", { enabled });
-        if (!result.ok) {
-          toggle.checked = !enabled;
-        }
-        addMessage("system", result.output || (enabled ? "Internet mode enabled." : "Internet mode disabled."));
+        var result = await api("/api/cloud-setup", payload);
+        if (keyEl) keyEl.value = "";
+        setCloudHint(result.output || "Saved.");
+        addMessage("system", result.output || "Cloud settings saved.");
       } catch (error) {
-        toggle.checked = !enabled;
+        setCloudHint(error.message);
         addMessage("system", error.message);
       } finally {
-        toggle.disabled = false;
+        setBusy(false);
         refreshStatus();
       }
     }
 
-    // --- ChatGPT-style Sidebar Drawer (mobile) ---
-    const sidebar = document.querySelector("#sidebar");
-    const menuToggle = document.querySelector("#menu-toggle");
-    const sidebarOverlay = document.querySelector("#sidebar-overlay");
-    function openSidebar() {
-      sidebar.classList.add("open");
-      sidebarOverlay.classList.add("active");
-      menuToggle.setAttribute("aria-expanded", "true");
-    }
-    function closeSidebar() {
-      sidebar.classList.remove("open");
-      sidebarOverlay.classList.remove("active");
-      menuToggle.setAttribute("aria-expanded", "false");
-    }
-    function toggleSidebar() {
-      if (sidebar.classList.contains("open")) closeSidebar(); else openSidebar();
-    }
-    menuToggle.addEventListener("click", toggleSidebar);
-    sidebarOverlay.addEventListener("click", closeSidebar);
-    // Auto-close drawer after clicking any sidebar button on mobile
-    sidebar.querySelectorAll("button").forEach(btn => {
-      btn.addEventListener("click", () => { if (window.innerWidth <= 820) closeSidebar(); });
-    });
-    // Close with ESC
-    document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeSidebar(); });
-
-    document.querySelector("#composer").addEventListener("submit", sendMessage);
-    document.querySelector("#warm").addEventListener("click", warmModel);
-    document.querySelector("#refresh").addEventListener("click", refreshStatus);
-    document.querySelector("#validate").addEventListener("click", () => runValidation(false));
-    document.querySelector("#validate-strict").addEventListener("click", () => runValidation(true));
-    document.querySelector("#cli").addEventListener("click", openCli);
-    document.querySelector("#clear-chat").addEventListener("click", clearChat);
-    document.querySelector("#internet-toggle").addEventListener("change", toggleInternet);
-    document.querySelector("#startup-toggle").addEventListener("change", toggleStartupAuth);
-    startupBtn.addEventListener("click", handleStartupVerify);
-    startupInput.addEventListener("keydown", (e) => { if (e.key === "Enter") handleStartupVerify(); });
-    messageInput.addEventListener("keydown", (event) => {
-      if (event.key === "Enter" && !event.shiftKey) {
-        event.preventDefault();
-        sendMessage(event);
+    async function installCloudDeps() {
+      setBusy(true, "Installing ADK & Cloud SDKs...");
+      setCloudHint("Installing google-genai, google-adk, and Google Cloud packages. This can take a few minutes.");
+      addMessage("system", "Installing Google Gemini / ADK / Cloud SDKs…");
+      try {
+        var result = await api("/api/cloud-install", {});
+        setCloudHint(result.output || "Install finished.");
+        addMessage("system", result.output || "Cloud SDKs installed.");
+      } catch (error) {
+        setCloudHint(error.message);
+        addMessage("system", error.message);
+      } finally {
+        setBusy(false);
+        refreshStatus();
       }
+    }
+
+    var sidebar = document.querySelector("#sidebar");
+    var menuToggle = document.querySelector("#menu-toggle");
+    var sidebarOverlay = document.querySelector("#sidebar-overlay");
+    function openSidebar() { if (sidebar) sidebar.classList.add("open"); if (sidebarOverlay) sidebarOverlay.classList.add("active"); if (menuToggle) menuToggle.setAttribute("aria-expanded", "true"); }
+    function closeSidebar() { if (sidebar) sidebar.classList.remove("open"); if (sidebarOverlay) sidebarOverlay.classList.remove("active"); if (menuToggle) menuToggle.setAttribute("aria-expanded", "false"); }
+    function toggleSidebar() { if (sidebar && sidebar.classList.contains("open")) closeSidebar(); else openSidebar(); }
+    if (menuToggle) menuToggle.addEventListener("click", toggleSidebar);
+    if (sidebarOverlay) sidebarOverlay.addEventListener("click", closeSidebar);
+    if (sidebar) sidebar.querySelectorAll("button").forEach(function(btn) { btn.addEventListener("click", function() { if (window.innerWidth <= 820) closeSidebar(); }); });
+    document.addEventListener("keydown", function(e) { if (e.key === "Escape") closeSidebar(); });
+
+    var composer = document.querySelector("#composer");
+    if (composer) composer.addEventListener("submit", sendMessage);
+    var warmBtn = document.querySelector("#warm");
+    if (warmBtn) warmBtn.addEventListener("click", warmModel);
+    var refreshBtn = document.querySelector("#refresh");
+    if (refreshBtn) refreshBtn.addEventListener("click", refreshStatus);
+    var validateBtn = document.querySelector("#validate");
+    if (validateBtn) validateBtn.addEventListener("click", function() { runValidation(false); });
+    var validateStrictBtn = document.querySelector("#validate-strict");
+    if (validateStrictBtn) validateStrictBtn.addEventListener("click", function() { runValidation(true); });
+    var cliBtn = document.querySelector("#cli");
+    if (cliBtn) cliBtn.addEventListener("click", openCli);
+    var clearChatBtn = document.querySelector("#clear-chat");
+    if (clearChatBtn) clearChatBtn.addEventListener("click", clearChat);
+    var internetToggle = document.querySelector("#internet-toggle");
+    if (internetToggle) internetToggle.addEventListener("change", toggleInternet);
+    var cloudSyncBtn = document.querySelector("#cloud-sync");
+    if (cloudSyncBtn) cloudSyncBtn.addEventListener("click", cloudSync);
+    ["gemini", "cloud", "adk"].forEach(function(id) {
+      var el = document.querySelector("#" + id);
+      if (el) el.addEventListener("click", openCloudSetup);
+    });
+    var saveCloudBtn = document.querySelector("#save-cloud-setup");
+    if (saveCloudBtn) saveCloudBtn.addEventListener("click", saveCloudSetup);
+    var installCloudBtn = document.querySelector("#install-cloud-deps");
+    if (installCloudBtn) installCloudBtn.addEventListener("click", installCloudDeps);
+    var startupToggle = document.querySelector("#startup-toggle");
+    if (startupToggle) startupToggle.addEventListener("change", toggleStartupAuth);
+    if (startupBtn) startupBtn.addEventListener("click", handleStartupVerify);
+    if (startupInput) startupInput.addEventListener("keydown", function(e) { if (e.key === "Enter") handleStartupVerify(); });
+    if (messageInput) messageInput.addEventListener("keydown", function(event) { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); sendMessage(event); } });
+
+    // Model selector
+    async function loadModels() {
+      try {
+        var res = await api("/api/models");
+        if (res.ok && res.models) {
+          var sel = document.querySelector("#model-select");
+          if (sel) {
+            sel.innerHTML = res.models.map(function(m) { return '<option value="' + m.name + '"' + (m.name === res.active ? ' selected' : '') + '>' + m.name + ' (' + m.size_gb + 'GB)</option>'; }).join('');
+            if (res.models.length === 0) sel.innerHTML = '<option value="">No models found</option>';
+          }
+        }
+      } catch(e) {}
+    }
+    loadModels();
+
+    // Inference controls
+    async function loadInference() {
+      try {
+        var params = await api("/api/inference-params");
+        if (params && params.temperature !== undefined) {
+          var setSlider = function(sliderId, valId, key, val) {
+            var s = document.querySelector(sliderId);
+            var v = document.querySelector(valId);
+            if (s) s.value = val;
+            if (v) v.textContent = val;
+            if (s) s.addEventListener("input", function() {
+              var v2 = document.querySelector(valId);
+              if (v2) v2.textContent = s.value;
+            });
+          };
+          setSlider("#inf-temp", "#inf-temp-val", "temperature", params.temperature);
+          setSlider("#inf-topp", "#inf-topp-val", "top_p", params.top_p);
+          setSlider("#inf-maxtok", "#inf-maxtok-val", "max_tokens", params.max_tokens);
+          setSlider("#inf-rp", "#inf-rp-val", "repeat_penalty", params.repeat_penalty);
+          setSlider("#inf-minp", "#inf-minp-val", "min_p", params.min_p);
+        }
+      } catch(e) {}
+    }
+    loadInference();
+
+    document.querySelector("#save-inference") && document.querySelector("#save-inference").addEventListener("click", async function() {
+      var params = {};
+      var sliders = [
+        {id: "#inf-temp", key: "temperature"}, {id: "#inf-topp", key: "top_p"},
+        {id: "#inf-maxtok", key: "max_tokens"}, {id: "#inf-rp", key: "repeat_penalty"},
+        {id: "#inf-minp", key: "min_p"}
+      ];
+      sliders.forEach(function(s) { var el = document.querySelector(s.id); if (el) params[s.key] = parseFloat(el.value) || 0; });
+      try {
+        var res = await api("/api/inference-params", {inference: params});
+        addMessage("system", res.ok ? res.output : res.output || "Failed to save.");
+      } catch(e) { addMessage("system", e.message); }
     });
 
-    // Auto-warm in background: no click needed, but only after auth to avoid CPU fight with Verify
+    // Prompt templates
+    async function loadTemplates() {
+      try {
+        var res = await api("/api/prompt-templates");
+        if (res.ok && res.templates) {
+          var sec = document.querySelector("#templates-section");
+          if (sec) sec.style.display = "";
+          var list = document.querySelector("#templates-list");
+          if (list) {
+            var active = res.active || "default";
+            list.innerHTML = Object.keys(res.templates).map(function(name) {
+              return '<div class="hist-item" data-template="' + name + '" style="' + (name === active ? "background:rgba(139,92,246,0.15);border:1px solid rgba(139,92,246,0.3);" : "") + '"><span style="font-weight:700;font-size:12px;color:' + (name === active ? "var(--violet)" : "var(--text)") + '">' + name + '</span>' + (name === active ? ' <span style="color:var(--lime);font-size:10px;">ACTIVE</span>' : '') + '</div>';
+            }).join('');
+            list.querySelectorAll("[data-template]").forEach(function(el) {
+              el.addEventListener("click", async function() {
+                var name = el.getAttribute("data-template");
+                try {
+                  var r = await api("/api/activate-template", {name: name});
+                  addMessage("system", r.ok ? "Template activated: " + name : r.output);
+                  loadTemplates();
+                } catch(e) { addMessage("system", e.message); }
+              });
+            });
+          }
+        }
+      } catch(e) {}
+    }
+    loadTemplates();
+
+    document.querySelector("#save-template") && document.querySelector("#save-template").addEventListener("click", async function() {
+      var name = document.querySelector("#new-template-name").value.trim();
+      var content = document.querySelector("#new-template-content").value.trim();
+      if (!name) { addMessage("system", "Template name is required."); return; }
+      if (!content) { addMessage("system", "Template content is required."); return; }
+      try {
+        var res = await api("/api/prompt-template", {name: name, content: content});
+        addMessage("system", res.ok ? res.output : res.output || "Failed.");
+        document.querySelector("#new-template-name").value = "";
+        document.querySelector("#new-template-content").value = "";
+        loadTemplates();
+      } catch(e) { addMessage("system", e.message); }
+    });
+
+    // Export/Import
+    document.querySelector("#export-md") && document.querySelector("#export-md").addEventListener("click", async function() {
+      try {
+        var res = await api("/api/export", {format: "markdown"});
+        if (res.ok) {
+          var blob = new Blob([res.output], {type: "text/markdown"});
+          var a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = "jampandu-export.md"; a.click();
+          addMessage("system", "Exported as Markdown.");
+        } else { addMessage("system", res.output); }
+      } catch(e) { addMessage("system", e.message); }
+    });
+    document.querySelector("#export-json") && document.querySelector("#export-json").addEventListener("click", async function() {
+      try {
+        var res = await api("/api/export", {format: "json"});
+        if (res.ok) {
+          var blob = new Blob([res.output], {type: "application/json"});
+          var a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = "jampandu-export.json"; a.click();
+          addMessage("system", "Exported as JSON.");
+        } else { addMessage("system", res.output); }
+      } catch(e) { addMessage("system", e.message); }
+    });
+    document.querySelector("#import-btn") && document.querySelector("#import-btn").addEventListener("click", function() {
+      document.querySelector("#import-file").click();
+    });
+    document.querySelector("#import-file") && document.querySelector("#import-file").addEventListener("change", async function(e) {
+      var file = e.target.files[0];
+      if (!file) return;
+      var reader = new FileReader();
+      reader.onload = async function(ev) {
+        try {
+          var res = await api("/api/import", {data: ev.target.result});
+          addMessage("system", res.ok ? "Imported " + res.imported + " conversations." : res.output);
+          loadHistory();
+        } catch(err) { addMessage("system", err.message); }
+      };
+      reader.readAsText(file);
+      e.target.value = "";
+    });
+
+    // Theme toggle
+    var themeToggle = document.querySelector("#theme-toggle");
+    if (themeToggle) {
+      function applyTheme(isLight) {
+        document.body.style.colorScheme = isLight ? "light" : "dark";
+        document.body.style.background = isLight
+          ? "linear-gradient(180deg, #f5f0ff, #e8e0f8)"
+          : "radial-gradient(1200px 800px at 5% -5%, rgba(139,92,246,0.30), transparent 55%), radial-gradient(1000px 700px at 105% 5%, rgba(236,72,153,0.22), transparent 50%), radial-gradient(900px 800px at 45% 115%, rgba(34,211,238,0.18), transparent 50%), radial-gradient(600px 500px at 85% 55%, rgba(251,146,60,0.10), transparent 55%), linear-gradient(180deg, var(--bg-0), var(--bg-1))";
+        document.body.style.backgroundAttachment = "fixed";
+      }
+      try {
+        var savedLight = localStorage.getItem("theme_light") === "1";
+        themeToggle.checked = savedLight;
+        if (savedLight) applyTheme(true);
+      } catch(e) {}
+      themeToggle.addEventListener("change", function() {
+        applyTheme(themeToggle.checked);
+        try { localStorage.setItem("theme_light", themeToggle.checked ? "1" : "0"); } catch(e) {}
+      });
+    }
+    // Model selector change handler
+    var modelSelect = document.querySelector("#model-select");
+    if (modelSelect) {
+      modelSelect.addEventListener("change", async function() {
+        var chosen = modelSelect.value;
+        if (!chosen) return;
+        try {
+          var cfgRes = await api("/api/settings");
+          if (cfgRes.ok && cfgRes.config) {
+            cfgRes.config.model_path = "models\\" + chosen;
+            var saveRes = await api("/api/settings", {config: cfgRes.config});
+            addMessage("system", saveRes.ok ? "Model switched to " + chosen + " — restart required to load." : saveRes.output);
+            refreshStatus();
+          }
+        } catch(e) { addMessage("system", "Model switch failed: " + e.message); }
+      });
+    }
+
     async function ensureWarmInBackground() {
       try {
-        const hasToken = !!(sessionStorage.getItem("auth_token") || localStorage.getItem("auth_token"));
-        const s = await api("/api/status");
-        if (s.startup_auth_enabled && !hasToken) {
-          // still locked — don't warm yet, will warm after unlock triggers refresh
-          return;
-        }
+        var hasToken = !!(sessionStorage.getItem("auth_token") || localStorage.getItem("auth_token"));
+        var s = await api("/api/status");
+        if (s.startup_auth_enabled && !hasToken) return;
         if (!s.model_server_running && s.model_exists && s.llama_exists) {
-          // Don't block UI - warm silently
-          const sub = document.querySelector("#subtitle");
+          var sub = document.querySelector("#subtitle");
           if (sub) sub.textContent = "Warming model in background (one-time, ~30s)...";
-          // Fire and forget - warm endpoint will load 4GB model into VRAM (requires auth token now)
-          api("/api/warm-model", {}).then(r => {
-            addMessage("system", r.output || "Model server is ready. Future replies will be instant.");
-            refreshStatus();
-          }).catch(()=>{});
+          api("/api/warm-model", {}).then(function(r) { addMessage("system", r.output || "Model server is ready. Future replies will be instant."); refreshStatus(); }).catch(function(){});
         }
       } catch(e) {}
     }
 
-    // --- History Section ---
-    let historyVisible = true;
+    // History with search
+    var historyVisible = true;
+    var allHistory = [];
+
+    function renderHistory(filter) {
+      filter = filter || "";
+      var list = document.querySelector("#history-list");
+      if (!list) return;
+      list.innerHTML = "";
+      var filtered = filter ? allHistory.filter(function(m) { return m.content.toLowerCase().indexOf(filter.toLowerCase()) >= 0; }) : allHistory;
+      if (filtered.length === 0) {
+        list.innerHTML = '<div style="color:var(--muted); font-size:12px; text-align:center; padding:12px;">No conversations found</div>';
+        var countEl = document.querySelector("#history-count");
+        if (countEl) countEl.textContent = allHistory.length;
+        return;
+      }
+      var permIcon = function(p) { return p ? "Pinned" : "Dot"; };
+      var roleColor = function(r) { return r === "user" ? "var(--cyan)" : "var(--violet)"; };
+      filtered.forEach(function(m) {
+        var row = document.createElement("div");
+        row.className = "hist-item";
+        var preview = m.content.slice(0, 70);
+        var roleLetter = m.role === 'user' ? 'U' : 'A';
+        row.innerHTML = '<span style="color:' + roleColor(m.role) + '; font-weight:700; font-size:11px; min-width:14px; flex-shrink:0;">' + roleLetter + '</span><span class="hist-preview"><span class="hist-text" title="' + escapeHtml(m.content.slice(0,120)) + '">' + escapeHtml(preview) + '</span></span><span class="hist-meta">' + permIcon(m.permanent) + '</span>';
+        row.addEventListener("click", function() {
+          var chatEl = document.createElement("div");
+          chatEl.className = "message " + m.role;
+          var nameEl = document.createElement("div"); nameEl.className = "msg-header";
+          var nameSpan = document.createElement("span"); nameSpan.className = "name"; nameSpan.textContent = m.role === "user" ? "You" : "Jampandu";
+          var tsSpan = document.createElement("span"); tsSpan.className = "timestamp"; tsSpan.textContent = getTimestamp();
+          nameEl.appendChild(nameSpan); nameEl.appendChild(tsSpan);
+          var bodyEl = document.createElement("div"); bodyEl.className = "text"; bodyEl.textContent = m.content;
+          chatEl.appendChild(nameEl); chatEl.appendChild(bodyEl);
+          chat.appendChild(chatEl);
+          scrollToBottom();
+        });
+        list.appendChild(row);
+      });
+      var countEl = document.querySelector("#history-count");
+      if (countEl) countEl.textContent = allHistory.length;
+    }
+
     async function loadHistory() {
       try {
-        const res = await api("/api/history");
+        var res = await api("/api/history");
         if (res.ok && res.history) {
-          const hist = res.history;
-          const list = document.querySelector("#history-list");
-          if (!list) return;
-          list.innerHTML = "";
-          const permIcon = (p) => p ? "📌" : "🔘";
-          const roleLabel = (r) => r === "user" ? "U" : "A";
-          const roleColor = (r) => r === "user" ? "var(--cyan)" : "var(--violet)";
-          hist.forEach(m => {
-            const row = document.createElement("div");
-            row.style.cssText = "display:flex; align-items:center; gap:6px; padding:5px 4px; border-bottom:1px solid var(--line-soft); cursor:pointer;";
-            row.innerHTML = `<span style="color:${roleColor(m.role)}; font-weight:700; font-size:11px; min-width:14px;">${roleLabel(m.role)}</span>` +
-              `<span style="flex:1; color:var(--text); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:11px;" title="${escapeHtml(m.content.slice(0,120))}">${escapeHtml(m.content.slice(0, 70))}</span>` +
-              `<span style="font-size:11px; cursor:pointer;" onclick="event.stopPropagation(); togglePin(${m.id});">${permIcon(m.permanent)}</span>`;
-            row.addEventListener("click", () => {
-              const chatEl = document.createElement("div");
-              chatEl.className = "message " + m.role;
-              const nameEl = document.createElement("div");
-              nameEl.className = "name";
-              nameEl.textContent = m.role === "user" ? "You" : "Jampandu";
-              const bodyEl = document.createElement("div");
-              bodyEl.className = "text";
-              bodyEl.textContent = m.content;
-              chatEl.append(nameEl, bodyEl);
-              const chat = document.querySelector("#chat");
-              chat.appendChild(chatEl);
-              scrollToBottom();
-            });
-            list.appendChild(row);
-          });
-          const countEl = document.querySelector("#history-count");
-          if (countEl) countEl.textContent = hist.length;
+          allHistory = res.history;
+          var filterEl = document.querySelector("#history-search");
+          var filter = filterEl ? filterEl.value : "";
+          renderHistory(filter);
         }
       } catch(e) { console.error("loadHistory:", e); }
     }
+
     async function togglePin(id) {
       try {
-        const res = await api("/api/toggle-pin", {id, permanent: true});
-        if (!res.ok) {
-          // if already permanent, toggle to temporary
-          await api("/api/toggle-pin", {id, permanent: false});
-        }
+        var res = await api("/api/toggle-pin", {id: id, permanent: true});
+        if (!res.ok) await api("/api/toggle-pin", {id: id, permanent: false});
         loadHistory();
       } catch(e) { console.error("togglePin:", e); }
     }
+
     async function signOff() {
       if (!confirm("Sign off? All non-pinned (temporary) history will be erased from this device.")) return;
       try {
-        const res = await api("/api/sign-off");
-        if (res.ok) {
-          addMessage("system", res.output || "Signed off — temporary history cleared.");
-          loadHistory();
-        } else {
-          addMessage("system", "Sign off failed: " + (res.output || "unknown"));
-        }
+        var res = await api("/api/sign-off");
+        if (res.ok) { addMessage("system", res.output || "Signed off - temporary history cleared."); loadHistory(); }
+        else { addMessage("system", "Sign off failed: " + (res.output || "unknown")); }
       } catch(e) { addMessage("system", "Sign off error: " + e.message); }
     }
-    document.querySelector("#history-refresh")?.addEventListener("click", loadHistory);
-    document.querySelector("#history-toggle")?.addEventListener("click", () => {
+
+    var historyRefreshBtn = document.querySelector("#history-refresh");
+    if (historyRefreshBtn) historyRefreshBtn.addEventListener("click", loadHistory);
+    var historyToggleBtn = document.querySelector("#history-toggle");
+    if (historyToggleBtn) historyToggleBtn.addEventListener("click", function() {
       historyVisible = !historyVisible;
-      const ls = document.querySelector("#history-list");
+      var ls = document.querySelector("#history-list");
       if (ls) ls.style.display = historyVisible ? "" : "none";
-      const sec = document.querySelector("#history-section");
+      var sec = document.querySelector("#history-section");
       if (sec) sec.style.display = historyVisible ? "" : "none";
     });
-    document.querySelector("#sign-off")?.addEventListener("click", signOff);
-    // Load history on startup
+    var signOffBtn = document.querySelector("#sign-off");
+    if (signOffBtn) signOffBtn.addEventListener("click", signOff);
+
+    var searchInput = document.querySelector("#history-search");
+    if (searchInput) {
+      var searchTimer = null;
+      searchInput.addEventListener("input", function() {
+        clearTimeout(searchTimer);
+        searchTimer = setTimeout(function() { renderHistory(searchInput.value); }, 200);
+      });
+    }
+
+    // Load history on startup and show empty state if no messages
     loadHistory();
+
+    if (chat && chat.children.length === 0) {
+      var empty = document.createElement("div");
+      empty.className = "empty-state";
+      empty.innerHTML = '<div class="empty-icon">Start a conversation</div><h3>Your chat will appear here</h3><p>Ask Jampandu anything - your local AI is ready.</p>';
+      chat.appendChild(empty);
+    }
 
     addMessage("system", "Jampandu desktop is ready.");
     refreshStatus();
-    // Kick auto-warm 1.5s after load so user never pays cold penalty on first message
     setTimeout(ensureWarmInBackground, 1500);
   </script>
-</body>
 </html>
 """
 
@@ -1757,6 +1485,137 @@ def load_config():
 def save_config(cfg):
     with CONFIG_PATH.open("w", encoding="utf-8") as config_file:
         json.dump(cfg, config_file, indent=2)
+
+
+def _module_ok(name):
+    try:
+        __import__(name)
+        return True
+    except Exception:
+        return False
+
+
+def _portable_python():
+    portable = BASE_DIR / "python-portable" / "python.exe"
+    if portable.exists():
+        return str(portable)
+    return sys.executable
+
+
+def apply_cloud_setup(payload):
+    """Save Gemini key to .env and GCP fields to config.json. Never echo the key."""
+    cfg, error = load_config()
+    if error:
+        return {"ok": False, "output": error}
+    if cfg is None:
+        cfg = {}
+    payload = payload or {}
+    env_updates = {}
+
+    key = str(payload.get("gemini_api_key") or "").strip()
+    if key:
+        env_updates["GEMINI_API_KEY"] = key
+
+    if "gcp_project" in payload:
+        project = str(payload.get("gcp_project") or "").strip()
+        cfg["gcp_project"] = project
+        if project:
+            env_updates["GOOGLE_CLOUD_PROJECT"] = project
+
+    if "gcp_location" in payload:
+        location = str(payload.get("gcp_location") or "").strip() or "us-central1"
+        cfg["gcp_location"] = location
+        env_updates["GOOGLE_CLOUD_LOCATION"] = location
+
+    if "gcs_bucket" in payload:
+        bucket = str(payload.get("gcs_bucket") or "").strip()
+        cfg["gcs_bucket"] = bucket
+        if bucket:
+            env_updates["GCS_BUCKET"] = bucket
+
+    if payload.get("gemini_model"):
+        model = str(payload.get("gemini_model")).strip()
+        cfg["gemini_model"] = model
+        env_updates["GEMINI_MODEL"] = model
+
+    if "gemini_enabled" in payload:
+        cfg["gemini_enabled"] = bool(payload["gemini_enabled"])
+    else:
+        cfg.setdefault("gemini_enabled", True)
+
+    if env_updates:
+        if vertex_config:
+            vertex_config.write_env_values(env_updates)
+        else:
+            # Fallback: write .env even if vertex_config failed to import
+            env_path = BASE_DIR / ".env"
+            lines = []
+            if env_path.exists():
+                lines = env_path.read_text(encoding="utf-8").splitlines()
+            seen = set()
+            out = []
+            for line in lines:
+                stripped = line.strip()
+                if stripped and not stripped.startswith("#") and "=" in stripped:
+                    k = stripped.split("=", 1)[0].strip()
+                    if k in env_updates:
+                        out.append(f"{k}={env_updates[k]}")
+                        seen.add(k)
+                        os.environ[k] = env_updates[k]
+                        continue
+                out.append(line)
+            for k, v in env_updates.items():
+                if k not in seen:
+                    out.append(f"{k}={v}")
+                    os.environ[k] = v
+            env_path.write_text("\n".join(out) + "\n", encoding="utf-8")
+
+    save_config(cfg)
+    has_key = bool(vertex_config.get_api_key()) if vertex_config else bool(os.getenv("GEMINI_API_KEY"))
+    project = (cfg.get("gcp_project") or "").strip()
+    parts = []
+    if has_key:
+        parts.append("Gemini key saved")
+    elif not project:
+        parts.append("No Gemini key yet — paste one from aistudio.google.com/apikey")
+    if project:
+        parts.append(f"GCP project {project}")
+    else:
+        parts.append("No GCP project (Firestore/Vertex still offline)")
+    parts.append("Turn Internet ON to use cloud replies")
+    return {"ok": True, "output": ". ".join(parts) + "."}
+
+
+def install_cloud_deps():
+    """pip install google-genai, google-adk, and GCP client libraries."""
+    req = BASE_DIR / "requirements.txt"
+    if not req.exists():
+        return {"ok": False, "output": "agent/requirements.txt is missing."}
+    py = _portable_python()
+    try:
+        proc = subprocess.run(
+            [py, "-m", "pip", "install", "-r", str(req)],
+            capture_output=True,
+            text=True,
+            timeout=420,
+            cwd=str(BASE_DIR),
+        )
+    except subprocess.TimeoutExpired:
+        return {"ok": False, "output": "SDK install timed out after 7 minutes. Try again or run: python-portable\\python.exe -m pip install -r requirements.txt"}
+    except Exception as exc:
+        return {"ok": False, "output": f"SDK install failed: {exc}"}
+    tail = ((proc.stdout or "") + "\n" + (proc.stderr or "")).strip().splitlines()[-12:]
+    summary = "\n".join(tail)
+    adk_ok = _module_ok("google.adk")
+    genai_ok = _module_ok("google.genai") or _module_ok("google.generativeai")
+    firestore_ok = _module_ok("google.cloud.firestore")
+    if proc.returncode == 0:
+        flags = []
+        flags.append("ADK ready" if adk_ok else "ADK still missing")
+        flags.append("Gemini SDK ready" if genai_ok else "Gemini SDK still missing")
+        flags.append("Firestore ready" if firestore_ok else "Firestore still missing")
+        return {"ok": True, "output": "Cloud SDKs installed. " + "; ".join(flags) + ".\n" + summary}
+    return {"ok": False, "output": f"pip exited {proc.returncode}.\n{summary}"}
 
 
 def set_internet_allowed(enabled, password=None):
@@ -1910,9 +1769,13 @@ def _clean_llm_output(text: str) -> str:
         seen.add(key)
         deduped.append(ln)
     text = "\n".join(deduped)
-    # 5) Trim excessive whitespace but preserve intentional breaks
+    # 5) Strip hallucinated "Searching for ... on google (incognito)..." tool echo —
+    #    real search is done server-side and injected as "Web search results:"; LLM should
+    #    never parrot the browser-open line. Remove it wherever it appears.
+    text = re.sub(r'Searching for\s+["\'].*?["\']\s+on\s+(google|bing|youtube|duckduckgo)\s*\(incognito\)\.\.\.\s*', '', text, flags=re.IGNORECASE)
+    # 6) Trim excessive whitespace but preserve intentional breaks
     text = re.sub(r'\n{3,}', '\n\n', text).strip()
-    # 6) If model still ended with incomplete year like "August 31, 2", try to fix via time context fallback
+    # 7) If model still ended with incomplete year like "August 31, 2", try to fix via time context fallback
     #    (do not auto-append year; just leave - better to be short than truncated)
     return text
 
@@ -1995,15 +1858,101 @@ def get_dynamic_internet_context():
         return None
     internet_allowed = bool(cfg.get("internet_allowed", False))
     startup_verified = STARTUP_VERIFIED
-    # If internet toggle is ON, explicitly tell LLM it is enabled - do not ask for /enable_internet again
     if internet_allowed:
-        # Startup verification already handles auth once at start, so after that no password re-ask
+        base = (
+            "SYSTEM STATE: Internet access is currently ENABLED (Internet toggle is ON). "
+            "When web search results are provided in context, summarize them and cite sources. "
+            "When no web results are provided, answer from your training knowledge — "
+            "DO NOT output 'Searching for ... on google (incognito)...' or claim to open a browser; "
+            "just answer directly."
+        )
         if startup_verified or not cfg.get("startup_auth_enabled", True):
-            return "SYSTEM STATE: Internet access is currently ENABLED (Internet toggle is ON and startup verification has been completed). You MAY fulfill YouTube/web search/browser requests directly. Do NOT say 'Run /enable_internet with the password first' - that gate is already passed."
+            return base + " Startup verification is already completed — do not ask for a password."
         else:
-            return "SYSTEM STATE: Internet access is currently ENABLED (Internet toggle is ON). Startup verification gate exists but Internet is already enabled - fulfill the request."
+            return base
     else:
         return "SYSTEM STATE: Internet access is currently DISABLED (Internet toggle is OFF). If user asks for YouTube/web search, tell them to turn the Internet toggle ON (no password needed after startup verification)."
+
+
+def fetch_web_search_results(query, num_results=5):
+    """Try DuckDuckGo/Bing RSS; return grounding only if results look relevant."""
+    import urllib.parse
+    import html as html_mod
+    cfg, _ = load_config()
+    if not cfg or not cfg.get("internet_allowed", False):
+        return None
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept-Language": "en-US,en;q=0.9",
+    }
+    raw = None
+    used = None
+    for base_url, name in (
+        (f"https://duckduckgo.com/html/?q={urllib.parse.quote_plus(query)}", "ddg"),
+        (f"https://www.bing.com/search?format=rss&q={urllib.parse.quote_plus(query)}", "rss"),
+        (f"https://www.bing.com/search?q={urllib.parse.quote_plus(query)}", "bing"),
+    ):
+        try:
+            req = urllib.request.Request(base_url, headers=headers)
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                raw = resp.read().decode("utf-8", errors="ignore")
+            if raw and len(raw) > 1000 and "anomaly" not in raw.lower() and "Too Many Requests" not in raw:
+                used = name
+                break
+        except Exception:
+            continue
+    if not raw or "anomaly" in raw.lower():
+        return None
+    import re
+    results = []
+    if used == "rss":
+        items = re.findall(r'<item>.*?<title>(.*?)</title>.*?<link>(.*?)</link>.*?<description>(.*?)</description>', raw, re.DOTALL)
+        for title, link, desc in items[:num_results]:
+            title = html_mod.unescape(re.sub(r'<[^>]+>', '', title)).strip()
+            link = html_mod.unescape(link.strip())
+            desc = html_mod.unescape(re.sub(r'<[^>]+>', '', desc)).strip()[:220]
+            if title and link.startswith("http"):
+                results.append(f"- {title}\n  {link}\n  {desc}")
+    else:
+        bing_blocks = re.findall(
+            r'<li class="b_algo[^"]*".*?<h2>.*?<a[^>]+href="([^"]+)".*?>(.*?)</a>.*?</h2>.*?<p[^>]*>(.*?)</p>',
+            raw, re.DOTALL
+        )
+        for href, title_html, snippet_html in bing_blocks[:num_results]:
+            title = re.sub(r'<[^>]+>', '', title_html).strip()
+            snippet = re.sub(r'<[^>]+>', '', snippet_html).strip()
+            title = html_mod.unescape(title)
+            snippet = html_mod.unescape(snippet)[:220]
+            href = html_mod.unescape(href)
+            # Decode Bing ck redirect: u=a1<base64> -> base64
+            if "bing.com/ck" in href:
+                try:
+                    import base64, urllib.parse as up
+                    qs = up.parse_qs(up.urlparse(href).query)
+                    u = qs.get("u", [None])[0]
+                    if u and u.startswith("a1"):
+                        pad = "=" * (-len(u[2:]) % 4)
+                        href = base64.b64decode(u[2:] + pad).decode(errors="ignore")
+                except: pass
+                if "bing.com" in href:
+                    continue
+            if title and href.startswith("http"):
+                results.append(f"- {title}\n  {href}\n  {snippet}")
+    if not results:
+        return None
+    # Relevance gate: at least one result must contain a keyword from query
+    q_tokens = [t.lower() for t in re.findall(r"[a-zA-Z]{3,}", query)]
+    # filter out generic stopwords
+    stops = {"the","and","for","are","available","market","with","about","from"}
+    keys = [t for t in q_tokens if t not in stops]
+    relevant = any(any(k in (r.lower()) for k in keys) for r in results)
+    if not relevant:
+        return None
+    return (
+        "Web search results for '" + query + "' (use these to answer; cite titles/URLs; "
+        "DO NOT reply with 'Searching for...' — the search is already done):\n"
+        + "\n\n".join(results)
+    )
 
 
 def is_port_open(host, port):
@@ -2231,6 +2180,12 @@ def runtime_status():
     cfg, error = load_config()
     model_path = resolve_agent_path(cfg.get("model_path")) if cfg else None
     llama_path = resolve_agent_path(cfg.get("llama_bin")) if cfg else None
+    # Be resilient: check both llama.exe and llama-server.exe regardless of cfg key
+    if llama_path and not llama_path.exists():
+        alt = BASE_DIR / "bin" / "llama-server.exe"
+        alt2 = BASE_DIR / "bin" / "llama.exe"
+        if alt.exists() or alt2.exists():
+            llama_path = alt if alt.exists() else alt2
     model_exists = bool(model_path and model_path.exists())
     llama_exists = bool(llama_path and llama_path.exists())
     config_exists = CONFIG_PATH.exists()
@@ -2248,6 +2203,37 @@ def runtime_status():
     else:
         summary = "Setup incomplete."
 
+    # Cloud / Gemini status for checklist + UI pills
+    gemini_enabled = bool(cfg and cfg.get("gemini_enabled", True))
+    if vertex_config:
+        gcp_project = vertex_config.get_gcp_project(cfg) or ""
+        gcs_bucket = (cfg.get("gcs_bucket") if cfg else "") or os.getenv("GCS_BUCKET", "") or ""
+        gemini_model = vertex_config.get_gemini_model(cfg)
+        gemini_has_key = bool(vertex_config.get_api_key())
+        gemini_key_hint = vertex_config.key_hint(vertex_config.get_api_key())
+        try:
+            gemini_available = gemini_client.is_available(cfg, bool(cfg and cfg.get("internet_allowed", False))) if gemini_client else False
+            gemini_backend = vertex_config.describe_backend(cfg)
+        except Exception:
+            gemini_available = False
+            gemini_backend = "error"
+    else:
+        gcp_project = (cfg.get("gcp_project") if cfg else "") or os.getenv("GOOGLE_CLOUD_PROJECT", "") or os.getenv("GCP_PROJECT", "")
+        gcs_bucket = (cfg.get("gcs_bucket") if cfg else "") or os.getenv("GCS_BUCKET", "")
+        gemini_model = (cfg.get("gemini_model") if cfg else "") or os.getenv("GEMINI_MODEL", "gemini-2.5-pro")
+        gemini_has_key = bool((os.getenv("GEMINI_API_KEY") or "").strip())
+        gemini_key_hint = "saved" if gemini_has_key else ""
+        gemini_available = False
+        gemini_backend = "not installed"
+    try:
+        adk_installed = bool(adk_health) and adk_health()["adk_installed"] if adk_health else False
+    except Exception:
+        adk_installed = False
+    try:
+        firestore_can_sync = bool(firestore_sync and firestore_sync.health_check(cfg, bool(cfg and cfg.get("internet_allowed", False))).get("can_sync"))
+    except Exception:
+        firestore_can_sync = False
+
     base = {
         "config_exists": config_exists,
         "model_path": str(model_path) if model_path else None,
@@ -2260,6 +2246,19 @@ def runtime_status():
         "startup_auth_enabled": bool(cfg.get("startup_auth_enabled", True)) if cfg else True,
         "startup_verified": STARTUP_VERIFIED,
         "summary": summary,
+        # Cloud fields
+        "gemini_enabled": gemini_enabled,
+        "gemini_available": gemini_available,
+        "gemini_has_key": gemini_has_key,
+        "gemini_key_hint": gemini_key_hint,
+        "gemini_model": gemini_model,
+        "gemini_backend": gemini_backend,
+        "gcp_project": gcp_project,
+        "gcs_bucket": gcs_bucket,
+        "adk_installed": adk_installed,
+        "genai_installed": _module_ok("google.genai") or _module_ok("google.generativeai"),
+        "firestore_installed": _module_ok("google.cloud.firestore"),
+        "firestore_can_sync": firestore_can_sync,
     }
     if prog:
         base["warm_progress"] = prog
@@ -2313,7 +2312,89 @@ def run_command(cmd, timeout):
     return {"ok": proc.returncode == 0, "output": output}
 
 
+def _try_cloud_generate(message, context=None, history_rows=None):
+    """Try Gemini via ADK/GenAI if internet + credentials. Returns dict or None (fall through)."""
+    try:
+        cfg, _ = load_config()
+        if not cfg or not cfg.get("internet_allowed", False):
+            return None
+        if not cfg.get("gemini_enabled", True):
+            return None
+        if not gemini_client or not gemini_client.is_available(cfg, True):
+            return None
+        # Build history + context docs
+        context_docs = []
+        if context:
+            context_docs = [context]
+        else:
+            try:
+                idx = single_query.load_index()
+                docs = single_query.query_topk(idx, message, k=3)
+                context_docs = [d["text"] for d in docs]
+            except Exception:
+                context_docs = []
+        hist = []
+        if history_rows:
+            for r, t in history_rows:
+                hist.append({"role": r, "content": t})
+        hist.append({"role": "user", "content": message})
+        # Prefer ADK
+        if run_adk_query:
+            try:
+                adk_res = run_adk_query(message, history=hist, context_docs=context_docs, internet_allowed=True)
+                if adk_res.get("ok"):
+                    out = _clean_llm_output(adk_res["output"])
+                    CONVERSATION.append({"role": "user", "content": message})
+                    _append_db('user', message, permanent=False)
+                    CONVERSATION.append({"role": "assistant", "content": out})
+                    _append_db('assistant', out, permanent=False)
+                    # Firestore sync best-effort
+                    if firestore_sync:
+                        try:
+                            firestore_sync.sync_conversation_to_firestore('user', message, config=cfg, internet_allowed=True)
+                            firestore_sync.sync_conversation_to_firestore('assistant', out, config=cfg, internet_allowed=True)
+                        except Exception:
+                            pass
+                    return {"ok": True, "output": out + " [via Gemini/ADK]"}
+            except Exception:
+                pass
+        # Direct gemini_client fallback
+        out = gemini_client.generate(
+            prompt=message,
+            history=hist,
+            context_docs=context_docs,
+            system_prompt=read_system_prompt(),
+            config=cfg,
+            internet_allowed=True,
+        )
+        out = _clean_llm_output(out)
+        CONVERSATION.append({"role": "user", "content": message})
+        _append_db('user', message, permanent=False)
+        CONVERSATION.append({"role": "assistant", "content": out})
+        _append_db('assistant', out, permanent=False)
+        if firestore_sync:
+            try:
+                firestore_sync.sync_conversation_to_firestore('user', message, config=cfg, internet_allowed=True)
+                firestore_sync.sync_conversation_to_firestore('assistant', out, config=cfg, internet_allowed=True)
+            except Exception:
+                pass
+        return {"ok": True, "output": out + " [via Gemini]"}
+    except Exception as e:
+        # Cloud failed - caller will fallback to local and surface hint
+        print(f"[cloud] Gemini failed, falling back to local: {e}")
+        return None
+
 def query_warm_server(message, context=None):
+    # Hybrid: try cloud first (Gemini 3.5+ via ADK/GenAI) before local llama
+    try:
+        con_preview = _db_conn()
+        hist_preview = get_context_history(con_preview)
+        con_preview.close()
+        cloud_res = _try_cloud_generate(message, context=context, history_rows=hist_preview)
+        if cloud_res:
+            return cloud_res
+    except Exception:
+        pass
     warm = start_llama_server(timeout=180)
     if not warm["ok"] and not llama_health():
         return warm
@@ -2322,29 +2403,64 @@ def query_warm_server(message, context=None):
     _append_db('user', message, permanent=False)
     # Inject dynamic internet state so LLM doesn't re-ask for password when toggle is already ON
     dynamic_ctx = get_dynamic_internet_context()
+    # Fetch web search results if message looks like a search query and internet is ON
+    web_ctx = None
+    cfg_check, _ = load_config()
+    if cfg_check and cfg_check.get("internet_allowed", False):
+        search_keywords = ("search", "find", "look up", "google", "best", "top", "latest", "what is", "who is", "how to", "where", "when", "which")
+        if any(kw in message.lower() for kw in search_keywords):
+            web_ctx = fetch_web_search_results(message)
     # Always inject real host time so "what is time now" never hallucinates 10:00 AM
     time_ctx = _time_context()
     # Merge caller context + dynamic internet context + time
-    combined_context = "\n\n".join([c for c in [context, dynamic_ctx, time_ctx] if c])
-    history = [{"role": "system", "content": read_system_prompt()}]
+    combined_context = "\n\n".join([c for c in [context, dynamic_ctx, web_ctx, time_ctx] if c])
+    # Qwen3.5 chat template allows exactly ONE system message at position 0 — merge
+    # prompt + dynamic context + time into a single system entry to avoid
+    # Jinja raise_exception('System message must be at the beginning') which
+    # caused WinError 10054 in the screenshot.
+    system_content = read_system_prompt()
     if combined_context:
-        history.append({"role": "system", "content": combined_context})
-    history += CONVERSATION[-12:]
-    _cfg, _ = load_config()
-    gen_tokens = int((_cfg or {}).get("max_tokens") or 768)
+        system_content = system_content + "\n\n" + combined_context
+
+    # Build history with expanded context from DB — drop poisoned "Searching for..." hallucination turns
+    con = _db_conn()
+    history_rows = get_context_history(con)
+    con.close()
+    # Filter poisoned history that would teach LLM to repeat the broken "Searching..." pattern
+    filtered_rows = []
+    for r, t in history_rows:
+        if "Searching for" in t and "(incognito)" in t:
+            continue
+        filtered_rows.append((r, t))
+    history_rows = filtered_rows
+    history = [{"role": "system", "content": system_content}]
+    for r, t in history_rows:
+        history.append({"role": "assistant" if r == "assistant" else "user", "content": t})
+
+    cfg, _ = load_config()
+    params = load_inference_params() if cfg else INFERENCE_DEFAULTS
+    gen_tokens = int(params.get("max_tokens", 768))
     try:
+        payload = {
+            "messages": history,
+            "temperature": float(params.get("temperature", 0.7)),
+            "max_tokens": gen_tokens,
+            "stream": False,
+            "enable_thinking": False,
+            "chat_template_kwargs": {"enable_thinking": False},
+            "stop": ["<|im_end|>", "</think>", "\nUser:", "\nAssistant:"],
+        }
+        if "top_p" in params:
+            payload["top_p"] = float(params["top_p"])
+        if "presence_penalty" in params:
+            payload["presence_penalty"] = float(params["presence_penalty"])
+        if "frequency_penalty" in params:
+            payload["frequency_penalty"] = float(params["frequency_penalty"])
+        if "min_p" in params:
+            payload["min_p"] = float(params["min_p"])
         result = post_json(
             llama_server_url("/v1/chat/completions"),
-            {
-                "messages": history,
-                "temperature": 0.7,
-                "max_tokens": gen_tokens,
-                "stream": False,
-                # Qwen3: disable hidden thinking channel server-side if supported
-                "enable_thinking": False,
-                "chat_template_kwargs": {"enable_thinking": False},
-                "stop": ["<|im_end|>", "<think>", "</think>", "\nUser:", "\nAssistant:"],
-            },
+            payload,
             timeout=120,
         )
         output = _clean_llm_output(result["choices"][0]["message"]["content"].strip())
@@ -2362,7 +2478,7 @@ def query_warm_server(message, context=None):
                 llama_server_url("/completion"),
                 {
                     "prompt": prompt,
-                    "temperature": 0.7,
+                    "temperature": float(params.get("temperature", 0.7)),
                     "n_predict": gen_tokens,
                     "stream": False,
                 },
@@ -2375,7 +2491,7 @@ def query_warm_server(message, context=None):
     if not output:
         output = "No response from the local model."
     # Final safety: if cleaning emptied truncated thinking-only output, fallback
-    if not output or output.strip() in ("<think>", "</think>"):
+    if not output or output.strip() in ("</think>",):
         output = "No response from the local model."
     CONVERSATION.append({"role": "assistant", "content": output})
     _append_db('assistant', output, permanent=False)
@@ -2413,35 +2529,413 @@ def query_assistant(message, use_rag):
         task = executor.parse_task(message)
         # Only intercept non-unknown tasks; let LLM handle general chat
         if task.get("action") not in ("unknown",):
-            response, success, needs_approval = executor.execute_task(task)
-            # Bluetooth: always return honest executor response (never let LLM hallucinate "Bluetooth is turned on")
-            if task.get("action") in ("bluetooth_on", "bluetooth_off", "bluetooth_status"):
-                CONVERSATION.append({"role": "user", "content": message})
-                CONVERSATION.append({"role": "assistant", "content": response})
-                _append_db('user', message, permanent=False)
-                _append_db('assistant', response, permanent=False)
-                return {"ok": True, "output": response}
-            # If executor handled it successfully, return directly (browser/search opened)
-            if success:
-                CONVERSATION.append({"role": "user", "content": message})
-                CONVERSATION.append({"role": "assistant", "content": response})
-                _append_db('user', message, permanent=False)
-                _append_db('assistant', response, permanent=False)
-                return {"ok": True, "output": response}
-            # If gated by internet OFF, return toggle hint (no password re-ask)
-            if "Internet is disabled" in response:
-                response = response.replace("Run /enable_internet first (password required).", "Turn the Internet toggle ON in the sidebar (no extra password after startup verification).")
-                CONVERSATION.append({"role": "user", "content": message})
-                CONVERSATION.append({"role": "assistant", "content": response})
-                _append_db('user', message, permanent=False)
-                _append_db('assistant', response, permanent=False)
-                return {"ok": True, "output": response}
+            # When internet is ON, let search queries go to the LLM so it can
+            # actually answer them in-chat instead of just opening a browser tab.
+            cfg, _ = load_config()
+            internet_on = bool(cfg.get("internet_allowed", False)) if cfg else False
+            if task.get("action") == "search" and internet_on:
+                pass  # fall through to LLM below
+            else:
+                response, success, needs_approval = executor.execute_task(task)
+                # Bluetooth: always return honest executor response (never let LLM hallucinate "Bluetooth is turned on")
+                if task.get("action") in ("bluetooth_on", "bluetooth_off", "bluetooth_status"):
+                    CONVERSATION.append({"role": "user", "content": message})
+                    CONVERSATION.append({"role": "assistant", "content": response})
+                    _append_db('user', message, permanent=False)
+                    _append_db('assistant', response, permanent=False)
+                    return {"ok": True, "output": response}
+                # If executor handled it successfully, return directly (browser/search opened)
+                if success:
+                    CONVERSATION.append({"role": "user", "content": message})
+                    CONVERSATION.append({"role": "assistant", "content": response})
+                    _append_db('user', message, permanent=False)
+                    _append_db('assistant', response, permanent=False)
+                    return {"ok": True, "output": response}
+                # If gated by internet OFF, return toggle hint (no password re-ask)
+                if "Internet is disabled" in response:
+                    response = response.replace("Run /enable_internet first (password required).", "Turn the Internet toggle ON in the sidebar (no extra password after startup verification).")
+                    CONVERSATION.append({"role": "user", "content": message})
+                    CONVERSATION.append({"role": "assistant", "content": response})
+                    _append_db('user', message, permanent=False)
+                    _append_db('assistant', response, permanent=False)
+                    return {"ok": True, "output": response}
     except Exception:
         pass  # fall through to LLM on any executor error
 
     if use_rag:
         return query_with_local_memory(message)
     return query_warm_server(message)
+
+
+INFERENCE_DEFAULTS = {
+    "temperature": 0.7,
+    "top_p": 0.9,
+    "max_tokens": 768,
+    "repeat_penalty": 1.1,
+    "min_p": 0.05,
+    "presence_penalty": 0.0,
+    "frequency_penalty": 0.0,
+}
+
+
+def get_available_models():
+    models_dir = BASE_DIR / "models"
+    models = []
+    if models_dir.exists():
+        for f in sorted(models_dir.iterdir()):
+            if f.suffix.lower() == ".gguf" and f.is_file():
+                models.append({
+                    "name": f.name,
+                    "path": str(f.relative_to(BASE_DIR)),
+                    "size_gb": round(f.stat().st_size / (1024**3), 2),
+                })
+    active = None
+    try:
+        cfg, _ = load_config()
+        if cfg and cfg.get("model_path"):
+            active = cfg["model_path"]
+    except Exception:
+        pass
+    return {"ok": True, "models": models, "active": active}
+
+
+def load_inference_params():
+    try:
+        cfg, _ = load_config()
+        if cfg and "inference" in cfg:
+            for k, v in INFERENCE_DEFAULTS.items():
+                if k not in cfg["inference"]:
+                    cfg["inference"][k] = v
+            return cfg["inference"]
+    except Exception:
+        pass
+    return dict(INFERENCE_DEFAULTS)
+
+
+def save_inference_params(params):
+    cfg, error = load_config()
+    if error:
+        return {"ok": False, "output": str(error)}
+    for k, v in INFERENCE_DEFAULTS.items():
+        if k not in params:
+            params[k] = v
+    # Clamp to sane ranges — screenshot showed temp 1.9 + 1984 tokens trashing context
+    try:
+        params["temperature"] = max(0.0, min(1.5, float(params.get("temperature", 0.7))))
+    except: params["temperature"] = 0.7
+    try:
+        params["top_p"] = max(0.1, min(1.0, float(params.get("top_p", 0.9))))
+    except: params["top_p"] = 0.9
+    try:
+        params["max_tokens"] = max(64, min(1024, int(params.get("max_tokens", 768))))
+    except: params["max_tokens"] = 768
+    try:
+        params["repeat_penalty"] = max(1.0, min(1.5, float(params.get("repeat_penalty", 1.1))))
+    except: params["repeat_penalty"] = 1.1
+    try:
+        params["min_p"] = max(0.0, min(0.2, float(params.get("min_p", 0.05))))
+    except: params["min_p"] = 0.05
+    cfg["inference"] = params
+    try:
+        save_config(cfg)
+        return {"ok": True, "output": "Inference params saved."}
+    except OSError as exc:
+        return {"ok": False, "output": str(exc)}
+
+
+def get_context_history(conn, max_turns=None):
+    """Build priority-based conversation context: system + pinned + recent."""
+    if max_turns is None:
+        try:
+            cfg, _ = load_config()
+            max_turns = int((cfg or {}).get("context_size", 24))
+        except Exception:
+            max_turns = 24
+    max_turns = max(4, min(max_turns, 64))
+    c = conn.cursor()
+    c.execute("SELECT role, text FROM conversation ORDER BY id DESC LIMIT ?", (max_turns * 2,))
+    rows = c.fetchall()[::-1]
+    return rows
+
+
+def export_conversations(fmt="markdown", date_from=None, date_to=None):
+    try:
+        con = _db_conn()
+        cur = con.cursor()
+        cur.execute("SELECT role, text, ts, permanent FROM conversation ORDER BY id ASC")
+        rows = cur.fetchall()
+        con.close()
+        if fmt == "json":
+            data = [{"role": r[0], "text": r[1], "ts": r[2], "permanent": bool(r[3])} for r in rows]
+            return json.dumps(data, indent=2), "application/json"
+        if fmt == "markdown":
+            lines = ["# Jampandu Conversation Export", "", "Exported: " + datetime.datetime.now().isoformat(), ""]
+            for role, text, ts, perm in rows:
+                tag = " 📌" if perm else ""
+                lines.append(("## You" if role == "user" else "### Jampandu") + " (" + ts + ")" + tag)
+                lines.append(text)
+                lines.append("")
+            return "\n".join(lines), "text/markdown"
+        if fmt == "text":
+            lines = []
+            for role, text, ts, perm in rows:
+                prefix = "YOU: " if role == "user" else "JAMPANDU: "
+                lines.append("[" + ts + "] " + prefix + text)
+            return "\n".join(lines), "text/plain"
+        return "", "text/plain"
+    except Exception as e:
+        return str(e), "text/plain"
+
+
+def import_conversations(file_data):
+    try:
+        data = json.loads(file_data)
+        if isinstance(data, dict) and "messages" in data:
+            data = data["messages"]
+        if not isinstance(data, list):
+            return {"ok": False, "output": "Invalid format: expected a list of messages."}
+        con = _db_conn()
+        cur = con.cursor()
+        count = 0
+        for msg in data:
+            role = msg.get("role", "user")
+            text = msg.get("text", "")
+            ts = msg.get("ts", datetime.datetime.utcnow().isoformat())
+            perm = 1 if msg.get("permanent", False) else 0
+            cur.execute("INSERT INTO conversation (role, text, ts, permanent) VALUES (?,?,?,?)",
+                        (role, text, ts, perm))
+            count += 1
+        con.commit()
+        con.close()
+        return {"ok": True, "imported": count}
+    except Exception as e:
+        return {"ok": False, "output": str(e)}
+
+
+def get_prompt_templates():
+    try:
+        cfg, _ = load_config()
+        templates = cfg.get("prompt_templates", {}) if cfg else {}
+        active = cfg.get("active_template", "default") if cfg else "default"
+        return {"ok": True, "templates": templates, "active": active}
+    except Exception as e:
+        return {"ok": False, "output": str(e)}
+
+
+def save_prompt_template(name, content, delete=False):
+    try:
+        cfg, error = load_config()
+        if error:
+            return {"ok": False, "output": str(error)}
+        templates = cfg.get("prompt_templates", {})
+        if delete:
+            if name in templates:
+                del templates[name]
+                cfg["prompt_templates"] = templates
+                save_config(cfg)
+                return {"ok": True, "output": "Template deleted."}
+            return {"ok": False, "output": "Template not found."}
+        templates[name] = content
+        cfg["prompt_templates"] = templates
+        save_config(cfg)
+        return {"ok": True, "output": "Template saved."}
+    except Exception as e:
+        return {"ok": False, "output": str(e)}
+
+
+def activate_template(name):
+    try:
+        cfg, error = load_config()
+        if error:
+            return {"ok": False, "output": str(error)}
+        cfg["active_template"] = name
+        save_config(cfg)
+        return {"ok": True, "output": "Template activated."}
+    except Exception as e:
+        return {"ok": False, "output": str(e)}
+
+
+def get_diagnostics():
+    import gc
+    try:
+        status = runtime_status()
+        mem_mb = 0
+        try:
+            import psutil
+            proc = psutil.Process()
+            mem_mb = round(proc.memory_info().rss / (1024 * 1024), 1)
+        except Exception:
+            pass
+        gc.collect()
+        return {
+            "ok": True,
+            "uptime": int(time.time() - WARM_START_TIME) if WARM_START_TIME else 0,
+            "model_server_running": status["model_server_running"],
+            "model_exists": status["model_exists"],
+            "model_path": status.get("model_path"),
+            "memory_mb": mem_mb,
+            "conversation_count": len(CONVERSATION),
+            "server_port": DEFAULT_PORT,
+            "llama_port": LLAMA_PORT,
+        }
+    except Exception as e:
+        return {"ok": False, "output": str(e)}
+
+
+def build_stream_response(message, use_rag):
+    """Yield SSE events for streaming response."""
+    try:
+        # Pre-LLM task intercept (mirror query_assistant logic)
+        try:
+            executor = get_task_executor()
+            task = executor.parse_task(message)
+            if task.get("action") not in ("unknown",):
+                # When internet is ON, let search queries go to the LLM so it can
+                # actually answer them in-chat instead of just opening a browser tab.
+                cfg, _ = load_config()
+                internet_on = bool(cfg.get("internet_allowed", False)) if cfg else False
+                if task.get("action") == "search" and internet_on:
+                    pass  # fall through to LLM below
+                else:
+                    response, success, needs_approval = executor.execute_task(task)
+                    if task.get("action") in ("bluetooth_on", "bluetooth_off", "bluetooth_status"):
+                        CONVERSATION.append({"role": "user", "content": message})
+                        CONVERSATION.append({"role": "assistant", "content": response})
+                        _append_db('user', message, permanent=False)
+                        _append_db('assistant', response, permanent=False)
+                        for tok in response.split():
+                            yield "data: " + json.dumps({"type": "token", "content": tok + " "}) + "\n\n"
+                        yield "data: " + json.dumps({"type": "done", "output": response}) + "\n\n"
+                        return
+                    if success:
+                        CONVERSATION.append({"role": "user", "content": message})
+                        CONVERSATION.append({"role": "assistant", "content": response})
+                        _append_db('user', message, permanent=False)
+                        _append_db('assistant', response, permanent=False)
+                        for tok in response.split():
+                            yield "data: " + json.dumps({"type": "token", "content": tok + " "}) + "\n\n"
+                        yield "data: " + json.dumps({"type": "done", "output": response}) + "\n\n"
+                        return
+                    if "Internet is disabled" in response:
+                        response = response.replace("Run /enable_internet first (password required).", "Turn the Internet toggle ON in the sidebar (no extra password after startup verification).")
+                        CONVERSATION.append({"role": "user", "content": message})
+                        CONVERSATION.append({"role": "assistant", "content": response})
+                        _append_db('user', message, permanent=False)
+                        _append_db('assistant', response, permanent=False)
+                    for tok in response.split():
+                        yield "data: " + json.dumps({"type": "token", "content": tok + " "}) + "\n\n"
+                    yield "data: " + json.dumps({"type": "done", "output": response}) + "\n\n"
+                    return
+        except Exception:
+            pass
+        # Signal that prep is starting (keeps connection alive during slow steps)
+        yield "data: " + json.dumps({"type": "thinking", "content": "Preparing context..."}) + "\n\n"
+        warm = start_llama_server(timeout=180)
+        if not warm["ok"] and not llama_health():
+            yield "data: " + json.dumps({"type": "error", "message": warm.get("output", "Server not ready.")}) + "\n\n"
+            return
+
+        CONVERSATION.append({"role": "user", "content": message})
+        _append_db('user', message, permanent=False)
+
+        rag_ctx = None
+        if use_rag:
+            try:
+                index = single_query.load_index()
+                docs = single_query.query_topk(index, message, k=3)
+                if docs:
+                    rag_ctx = "Relevant local notes:\n" + "\n\n".join(doc["text"] for doc in docs)
+            except Exception:
+                rag_ctx = None
+        dynamic_ctx = get_dynamic_internet_context()
+        # Fetch web search results if message looks like a search query and internet is ON
+        web_ctx = None
+        cfg_check, _ = load_config()
+        if cfg_check and cfg_check.get("internet_allowed", False):
+            search_keywords = ("search", "find", "look up", "google", "best", "top", "latest", "what is", "who is", "how to", "where", "when", "which")
+            if any(kw in message.lower() for kw in search_keywords):
+                web_ctx = fetch_web_search_results(message)
+        time_ctx = _time_context()
+        combined_context = "\n\n".join([c for c in [rag_ctx, dynamic_ctx, web_ctx, time_ctx] if c])
+        system_content = read_system_prompt()
+        if combined_context:
+            system_content = system_content + "\n\n" + combined_context
+
+        # Build history with expanded context — drop poisoned hallucination turns
+        con = _db_conn()
+        history_rows = get_context_history(con)
+        con.close()
+        filtered = [(r,t) for r,t in history_rows if not ("Searching for" in t and "(incognito)" in t)]
+        history_rows = filtered
+
+        msgs = [{"role": "system", "content": system_content}]
+        for r, t in history_rows:
+            msgs.append({"role": "assistant" if r == "assistant" else "user", "content": t})
+
+        cfg, _ = load_config()
+        params = load_inference_params() if cfg else INFERENCE_DEFAULTS
+        gen_tokens = int(params.get("max_tokens", 768))
+
+        payload = {
+            "messages": msgs,
+            "temperature": float(params.get("temperature", 0.7)),
+            "max_tokens": gen_tokens,
+            "stream": True,
+            "enable_thinking": False,
+            "chat_template_kwargs": {"enable_thinking": False},
+            "stop": ["<|im_end|>", "</think>", "\nUser:", "\nAssistant:"],
+        }
+        if "top_p" in params:
+            payload["top_p"] = float(params["top_p"])
+        if "presence_penalty" in params:
+            payload["presence_penalty"] = float(params["presence_penalty"])
+        if "frequency_penalty" in params:
+            payload["frequency_penalty"] = float(params["frequency_penalty"])
+        if "min_p" in params:
+            payload["min_p"] = float(params["min_p"])
+
+        data = json.dumps(payload).encode("utf-8")
+        req = urllib.request.Request(
+            llama_server_url("/v1/chat/completions"),
+            data=data,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+
+        first_token = True
+        full_output = ""
+        with urllib.request.urlopen(req, timeout=120) as resp:
+            for line in resp:
+                line = line.decode("utf-8").strip()
+                if not line.startswith("data: "):
+                    continue
+                raw = line[6:].strip()
+                if raw == "[DONE]":
+                    break
+                try:
+                    chunk = json.loads(raw)
+                except Exception:
+                    continue
+                if "choices" in chunk and chunk["choices"]:
+                    delta = chunk["choices"][0].get("delta", {})
+                    token = delta.get("content", "")
+                    if token:
+                        full_output += token
+                        yield "data: " + json.dumps({"type": "token", "content": token}) + "\n\n"
+                    if chunk["choices"][0].get("finish_reason") == "stop":
+                        break
+
+        if not full_output:
+            full_output = "No response from the local model."
+        if full_output.strip() in ("</think>",):
+            full_output = "No response from the local model."
+        full_output = _clean_llm_output(full_output)
+
+        CONVERSATION.append({"role": "assistant", "content": full_output})
+        _append_db('assistant', full_output, permanent=False)
+        yield "data: " + json.dumps({"type": "done", "output": full_output}) + "\n\n"
+    except Exception as e:
+        yield "data: " + json.dumps({"type": "error", "message": str(e)}) + "\n\n"
 
 
 def validate_package(strict=False):
@@ -2489,6 +2983,69 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json({"ok": True, "log": txt})
             except Exception as exc:
                 self.send_json({"ok": False, "output": str(exc)})
+            return
+        if parsed.path == "/api/diagnostics":
+            if not _require_auth(self):
+                return
+            self.send_json(get_diagnostics())
+            return
+        if parsed.path == "/api/inference-params":
+            if not _require_auth(self):
+                return
+            self.send_json(load_inference_params())
+            return
+        if parsed.path == "/api/prompt-templates":
+            if not _require_auth(self):
+                return
+            self.send_json(get_prompt_templates())
+            return
+        if parsed.path == "/api/models":
+            if not _require_auth(self):
+                return
+            self.send_json(get_available_models())
+            return
+        if parsed.path == "/api/settings":
+            if not _require_auth(self):
+                return
+            try:
+                cfg, _ = load_config()
+                self.send_json({"ok": True, "config": cfg})
+            except Exception as exc:
+                self.send_json({"ok": False, "output": str(exc)})
+            return
+        if parsed.path == "/api/export":
+            if not _require_auth(self):
+                return
+            fmt = urllib.parse.parse_qs(parsed.query).get("format", ["markdown"])[0]
+            try:
+                data, content_type = export_conversations(fmt=fmt)
+                self.send_json({"ok": True, "output": data, "content_type": content_type})
+            except Exception as exc:
+                self.send_json({"ok": False, "output": str(exc)})
+            return
+        if parsed.path == "/api/gemini-status":
+            if not _require_auth(self):
+                return
+            cfg, _ = load_config()
+            out = {}
+            if vertex_config:
+                out["backend"] = vertex_config.describe_backend(cfg)
+                out["model"] = vertex_config.get_gemini_model(cfg)
+                out["vertex_mode"] = vertex_config.is_vertex_mode(cfg)
+                out["has_key"] = bool(vertex_config.get_api_key())
+                out["key_hint"] = vertex_config.key_hint(vertex_config.get_api_key())
+            if gemini_client:
+                out["gemini_health"] = gemini_client.health_check(cfg, bool(cfg.get("internet_allowed", False)) if cfg else False)
+            if firestore_sync:
+                out["cloud_health"] = firestore_sync.health_check(cfg, bool(cfg.get("internet_allowed", False)) if cfg else False)
+            if adk_health:
+                try:
+                    out["adk"] = adk_health()
+                except Exception as e:
+                    out["adk_error"] = str(e)
+            out["genai_installed"] = _module_ok("google.genai") or _module_ok("google.generativeai")
+            out["adk_sdk_installed"] = _module_ok("google.adk")
+            self.send_json({"ok": True, "output": json.dumps(out, indent=2), "data": out})
             return
         self.send_error(404)
 
@@ -2615,6 +3172,170 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json({"ok": True, "permanent": permanent})
             except Exception as exc:
                 self.send_json({"ok": False, "output": str(exc)})
+            return
+        if parsed.path == "/api/stream":
+            if not _require_auth(self):
+                return
+            message = str(payload.get("message", "")).strip()
+            if not message:
+                self.send_json({"ok": False, "output": "Message cannot be empty."}, status=400)
+                return
+            use_rag = bool(payload.get("use_rag", False))
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+            self.send_header("Cache-Control", "no-cache")
+            self.send_header("Connection", "keep-alive")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.end_headers()
+            try:
+                for event in build_stream_response(message, use_rag):
+                    self.wfile.write((event + "\n").encode("utf-8"))
+                    self.wfile.flush()
+            except Exception as exc:
+                err_event = "data: " + json.dumps({"type": "error", "message": str(exc)}) + "\n\n"
+                self.wfile.write(err_event.encode("utf-8"))
+                self.wfile.flush()
+            self.close_connection = True
+            return
+        if parsed.path == "/api/inference-params":
+            if not _require_auth(self):
+                return
+            params = payload.get("inference", payload) if isinstance(payload, dict) else {}
+            # filter to known keys to avoid saving wrapper garbage
+            filtered = {k: params[k] for k in INFERENCE_DEFAULTS if k in params}
+            if filtered:
+                params = filtered
+            result = save_inference_params(params)
+            self.send_json(result)
+            return
+        if parsed.path == "/api/settings":
+            if not _require_auth(self):
+                return
+            try:
+                cfg = payload.get("config")
+                if cfg:
+                    save_config(cfg)
+                    self.send_json({"ok": True, "output": "Settings saved."})
+                else:
+                    self.send_json({"ok": False, "output": "No config provided."})
+            except Exception as exc:
+                self.send_json({"ok": False, "output": str(exc)})
+            return
+        if parsed.path == "/api/prompt-template":
+            if not _require_auth(self):
+                return
+            name = payload.get("name", "")
+            content = payload.get("content", "")
+            delete = bool(payload.get("delete", False))
+            if not name:
+                self.send_json({"ok": False, "output": "Template name required."})
+                return
+            self.send_json(save_prompt_template(name, content, delete=delete))
+            return
+        if parsed.path == "/api/activate-template":
+            if not _require_auth(self):
+                return
+            name = payload.get("name", "")
+            self.send_json(activate_template(name))
+            return
+        if parsed.path == "/api/import":
+            if not _require_auth(self):
+                return
+            file_data = payload.get("data", "")
+            if not file_data:
+                self.send_json({"ok": False, "output": "No data provided."})
+                return
+            self.send_json(import_conversations(file_data))
+            return
+        if parsed.path == "/api/export":
+            if not _require_auth(self):
+                return
+            fmt = payload.get("format", "markdown") if payload else "markdown"
+            try:
+                data, content_type = export_conversations(fmt=fmt)
+                self.send_json({"ok": True, "output": data, "content_type": content_type})
+            except Exception as exc:
+                self.send_json({"ok": False, "output": str(exc)})
+            return
+        if parsed.path == "/api/cloud-setup":
+            if not _require_auth(self):
+                return
+            try:
+                self.send_json(apply_cloud_setup(payload))
+            except Exception as exc:
+                self.send_json({"ok": False, "output": str(exc)})
+            return
+        if parsed.path == "/api/cloud-install":
+            if not _require_auth(self):
+                return
+            try:
+                self.send_json(install_cloud_deps())
+            except Exception as exc:
+                self.send_json({"ok": False, "output": str(exc)})
+            return
+        if parsed.path == "/api/cloud-sync":
+            if not _require_auth(self):
+                return
+            cfg, _ = load_config()
+            internet = bool(cfg.get("internet_allowed", False)) if cfg else False
+            if not internet:
+                self.send_json({"ok": False, "output": "Internet disabled. Enable via toggle first."})
+                return
+            results = {}
+            if firestore_sync:
+                try:
+                    # sync last 20 DB rows
+                    con = _db_conn()
+                    cur = con.cursor()
+                    cur.execute("SELECT role, text FROM conversation ORDER BY id DESC LIMIT 20")
+                    rows = cur.fetchall()
+                    con.close()
+                    synced = 0
+                    for r, t in reversed(rows):
+                        res = firestore_sync.sync_conversation_to_firestore(r, t, config=cfg, internet_allowed=True)
+                        if res.get("ok"):
+                            synced += 1
+                    results["firestore_synced"] = synced
+                    # brain sync
+                    bres = firestore_sync.sync_brain_docs_to_firestore(config=cfg, internet_allowed=True)
+                    results["brain"] = bres
+                    # GCS backup
+                    gres = firestore_sync.backup_brain_to_gcs(config=cfg, internet_allowed=True)
+                    results["gcs"] = gres
+                except Exception as exc:
+                    results["error"] = str(exc)
+            if vertex_config and gemini_client:
+                try:
+                    results["gemini"] = gemini_client.health_check(cfg, True)
+                except Exception as e:
+                    results["gemini_error"] = str(e)
+            if adk_health:
+                try:
+                    results["adk"] = adk_health()
+                except Exception as e:
+                    results["adk_error"] = str(e)
+            ok = any(v.get("ok") for v in results.values() if isinstance(v, dict))
+            self.send_json({"ok": ok or True, "output": f"Cloud sync results: {json.dumps(results, indent=2)}", "results": results})
+            return
+        if parsed.path == "/api/gemini-status":
+            if not _require_auth(self):
+                return
+            cfg, _ = load_config()
+            out = {}
+            if vertex_config:
+                out["backend"] = vertex_config.describe_backend(cfg)
+                out["model"] = vertex_config.get_gemini_model(cfg)
+                out["vertex_mode"] = vertex_config.is_vertex_mode(cfg)
+            if gemini_client:
+                out["gemini_health"] = gemini_client.health_check(cfg, bool(cfg.get("internet_allowed", False)) if cfg else False)
+            if firestore_sync:
+                out["cloud_health"] = firestore_sync.health_check(cfg, bool(cfg.get("internet_allowed", False)) if cfg else False)
+            if adk_health:
+                try:
+                    out["adk"] = adk_health()
+                except Exception as e:
+                    out["adk_error"] = str(e)
+            self.send_json({"ok": True, "output": json.dumps(out, indent=2), "data": out})
             return
         self.send_error(404)
 

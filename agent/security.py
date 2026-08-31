@@ -14,7 +14,7 @@ import secrets
 from getpass import getpass
 
 
-PBKDF2_ITERATIONS = 310_000
+PBKDF2_ITERATIONS = 180_000
 
 
 def _encode(value: bytes) -> str:

@@ -1,0 +1,10 @@
+[AutoRun]
+Label=Pen AI - Portable Assistant
+Icon=pen AI\agent\brain.ico
+Action=Start Pen AI in Browser
+Open=START_HERE.bat
+ShellExecute=START_HERE.bat
+UseAutoPlay=1
+Shell\StartPenAI=Start Pen AI in Browser
+Shell\StartPenAI\Command=START_HERE.bat
+

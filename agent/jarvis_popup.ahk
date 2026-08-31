@@ -2,7 +2,7 @@
 #SingleInstance Force
 #NoTrayIcon
 
-; Jarvis popup. Press Ctrl+Shift+J to send selected text to the local model.
+; Jampandu popup. Press Ctrl+Shift+J to send selected text to the local model.
 ; User text is written to a temporary file; it is never interpolated into a
 ; command line.
 
@@ -17,10 +17,10 @@ CreateGui(selectedText := "") {
     if IsObject(JarvisGui)
         JarvisGui.Destroy()
 
-    gui := Gui("+AlwaysOnTop -Caption", "Jarvis")
+    gui := Gui("+AlwaysOnTop -Caption", "Jampandu")
     gui.BackColor := "101010"
     gui.SetFont("s10", "Segoe UI")
-    gui.AddText("x10 y10 w480 h20", "Jarvis - Suggestion (Esc closes)")
+    gui.AddText("x10 y10 w480 h20", "Jampandu - Suggestion (Esc closes)")
     original := gui.AddEdit("vOriginalText x10 y40 w480 r7")
     original.Value := selectedText
     checkButton := gui.AddButton("x10 y170 w90 h30", "Check")
@@ -50,7 +50,7 @@ RunQuery(*) {
     global AGENT_DIR, PYTHON_PATH, JarvisGui
     originalText := JarvisGui["OriginalText"].Value
     if !Trim(originalText) {
-        MsgBox("No text selected or provided.", "Jarvis", 48)
+        MsgBox("No text selected or provided.", "Jampandu", 48)
         return
     }
 
@@ -78,18 +78,18 @@ CopySuggestion(*) {
     global JarvisGui
     suggestion := JarvisGui["Suggestion"].Value
     if !Trim(suggestion) {
-        MsgBox("Nothing to copy.", "Jarvis", 48)
+        MsgBox("Nothing to copy.", "Jampandu", 48)
         return
     }
     A_Clipboard := suggestion
-    MsgBox("Suggestion copied to clipboard.", "Jarvis", 64)
+    MsgBox("Suggestion copied to clipboard.", "Jampandu", 64)
 }
 
 PasteSuggestion(*) {
     global JarvisGui
     suggestion := JarvisGui["Suggestion"].Value
     if !Trim(suggestion) {
-        MsgBox("Nothing to paste.", "Jarvis", 48)
+        MsgBox("Nothing to paste.", "Jampandu", 48)
         return
     }
     A_Clipboard := suggestion
@@ -101,9 +101,9 @@ StopAndClean(*) {
     global AGENT_DIR
     try {
         RunWait(A_ComSpec ' /d /c ""' AGENT_DIR '\\stop_and_clean.bat""', AGENT_DIR, "Hide")
-        MsgBox("Temporary files were removed.", "Jarvis", 64)
+        MsgBox("Temporary files were removed.", "Jampandu", 64)
     } catch as err {
-        MsgBox("Cleanup failed: " err.Message, "Jarvis", 16)
+        MsgBox("Cleanup failed: " err.Message, "Jampandu", 16)
     }
 }
 

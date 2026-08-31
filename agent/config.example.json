@@ -4,5 +4,11 @@
   "llama_cmd_template": "{bin} -m {model} --cuda --threads 8 --temp 0.7 --repeat_penalty 1.1 --n_predict 512 --prompt-file {prompt_file}",
   "no_internet": true,
   "internet_allowed": false,
-  "theme": "neon"
+  "theme": "neon",
+  "gemini_enabled": true,
+  "gemini_model": "gemini-2.5-pro",
+  "gcp_project": "",
+  "gcp_location": "us-central1",
+  "firestore_collection": "jarvis_conversations",
+  "gcs_bucket": ""
 }

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Voice assistant module for Jarvis - provides speech-to-text and text-to-speech capabilities.
+Voice assistant module for Jampandu - provides speech-to-text and text-to-speech capabilities.
 Designed to work offline on Windows using local TTS and optional offline STT.
 """
 import os

@@ -1,4 +1,4 @@
-"""Strict, local-only command policy for the Jarvis agent.
+"""Strict, local-only command policy for the Jampandu agent.
 
 The agent is intentionally limited to a few read-only diagnostic programs.
 Adding a command requires an explicit code change and review; configuration

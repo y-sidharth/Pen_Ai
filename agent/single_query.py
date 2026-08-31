@@ -84,6 +84,15 @@ def build_index():
             json.dump(index, f)
     except Exception:
         pass
+    # Cloud: optional GCS backup of index (best-effort, never blocks)
+    try:
+        import json as _js
+        cfg = _js.loads(open(CONFIG_PATH, 'r', encoding='utf-8').read()) if os.path.exists(CONFIG_PATH) else {}
+        if cfg.get('internet_allowed') and cfg.get('gcs_bucket'):
+            import firestore_sync
+            firestore_sync.backup_brain_to_gcs(config=cfg, internet_allowed=True)
+    except Exception:
+        pass
     return index
 
 
@@ -198,9 +207,8 @@ def main():
     try:
         import llama_server
         if llama_server.is_healthy():
-            _msgs = [{'role': 'system', 'content': system_prompt}]
-            if context:
-                _msgs.append({'role': 'system', 'content': context})
+            _sys = system_prompt + ("\n\n" + context if context else "")
+            _msgs = [{'role': 'system', 'content': _sys}]
             _msgs.append({'role': 'user', 'content': query_text})
             warm_out = llama_server.chat(_msgs, timeout=120)
             if warm_out:
